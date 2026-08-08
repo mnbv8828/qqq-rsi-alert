@@ -1,5 +1,7 @@
-BOT_TOKEN = "8783614452:AAEyIFAKnlwZhGC6xEFnrYud_-z3ml5F-k0"
-CHAT_ID = "7690987343"
+import os
+
+BOT_TOKEN = os.environ.get("8783614452:AAEyIFAKnlwZhGC6xEFnrYud_-z3ml5F-k0")
+CHAT_ID = os.environ.get("7690987343")
 
 TICKER = "QQQ"
 
