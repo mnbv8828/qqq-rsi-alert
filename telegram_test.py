@@ -10,12 +10,13 @@ response = requests.post(
     url,
     data={
         "chat_id": CHAT_ID,
-        "text": "✅ QQQ 알림 봇 테스트 성공!\nGitHub Actions → Telegram 연결 정상입니다."
+        "text": "✅ QQQ 알림 봇 테스트 성공!"
     },
     timeout=20
 )
 
 print(response.text)
+
 response.raise_for_status()
 
 print("텔레그램 테스트 메시지 전송 완료")
