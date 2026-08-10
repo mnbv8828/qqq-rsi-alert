@@ -1,0 +1,55 @@
+name: X Trading Indicator Daily
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # 미국 정규장 종료 후 실행
+    # UTC 21:10
+    # 한국시간 06:10
+    - cron: "10 21 * * 1-5"
+
+jobs:
+
+  trading-alert:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Trading Indicator
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+
+          # 여러 종목 가능
+          # 예:
+          # QQQ,SPY,TSLA,NVDA,AAPL
+          TICKERS: QQQ
+
+        run: |
+          python main.py
+
+      - name: Save alert state
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add alert_state.json
+
+          git diff --cached --quiet || git commit -m "Update alert state"
+
+          git push
