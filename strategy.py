@@ -3,242 +3,580 @@ import pandas as pd
 
 
 # ============================================================
-# RSI
+# 설정
 # ============================================================
 
-def calculate_rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    delta = close.diff()
+RSI_LENGTH = 14
+
+OVERSOLD_LEVEL = 30.0
+OVERBOUGHT_LEVEL = 70.0
+
+PIVOT_LEFT = 3
+PIVOT_RIGHT = 3
+
+DIV_MIN_RANGE = 3
+DIV_MAX_RANGE = 80
+
+MIN_BARS = 5
+MAX_BARS = 40
+
+MIN_HL_PERCENT = 0.15
+
+SIGNAL_COOLDOWN = 25
+
+# 실제 신호를 확인할 최근 일수
+SIGNAL_LOOKBACK = 120
+
+
+# ============================================================
+# RSI
+# TradingView ta.rsi()와 최대한 동일하게
+# Wilder RMA 방식 사용
+# ============================================================
+
+def calculate_rsi(series: pd.Series, length: int = 14) -> pd.Series:
+
+    delta = series.diff()
 
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
 
     avg_gain = gain.ewm(
-        alpha=1 / period,
+        alpha=1 / length,
         adjust=False,
-        min_periods=period
+        min_periods=length
     ).mean()
 
     avg_loss = loss.ewm(
-        alpha=1 / period,
+        alpha=1 / length,
         adjust=False,
-        min_periods=period
+        min_periods=length
     ).mean()
 
     rs = avg_gain / avg_loss.replace(0, np.nan)
 
-    return 100 - (100 / (1 + rs))
+    rsi = 100 - (100 / (1 + rs))
 
-
-# ============================================================
-# Pine ta.pivotlow()
-# ============================================================
-
-def pivot_low(
-    series: pd.Series,
-    left: int,
-    right: int
-) -> pd.Series:
-
-    result = pd.Series(
-        np.nan,
-        index=series.index,
-        dtype=float
+    # 상승만 계속되는 경우 TradingView RSI의 100 처리
+    rsi = rsi.where(
+        avg_loss != 0,
+        100
     )
 
-    values = series.to_numpy()
-
-    for i in range(left, len(series) - right):
-
-        center = values[i]
-
-        if np.isnan(center):
-            continue
-
-        left_values = values[i - left:i]
-        right_values = values[i + 1:i + right + 1]
-
-        if (
-            np.isnan(left_values).any()
-            or np.isnan(right_values).any()
-        ):
-            continue
-
-        if (
-            center <= left_values.min()
-            and center <= right_values.min()
-        ):
-            # Pine에서는 right bar가 지난 시점에 확정
-            result.iloc[i + right] = center
-
-    return result
-
-
-# ============================================================
-# Pine ta.pivothigh()
-# ============================================================
-
-def pivot_high(
-    series: pd.Series,
-    left: int,
-    right: int
-) -> pd.Series:
-
-    result = pd.Series(
-        np.nan,
-        index=series.index,
-        dtype=float
+    # 하락만 계속되는 경우 0
+    rsi = rsi.where(
+        avg_gain != 0,
+        0
     )
 
-    values = series.to_numpy()
-
-    for i in range(left, len(series) - right):
-
-        center = values[i]
-
-        if np.isnan(center):
-            continue
-
-        left_values = values[i - left:i]
-        right_values = values[i + 1:i + right + 1]
-
-        if (
-            np.isnan(left_values).any()
-            or np.isnan(right_values).any()
-        ):
-            continue
-
-        if (
-            center >= left_values.max()
-            and center >= right_values.max()
-        ):
-            result.iloc[i + right] = center
-
-    return result
+    return rsi
 
 
 # ============================================================
-# 전략
+# Pivot Low
+#
+# Pine:
+# ta.pivotlow(low, 3, 3)
+#
+# 현재 bar에서 pivot이 확정되지만,
+# 실제 pivot 위치는 3개 전 bar.
+# ============================================================
+
+def is_pivot_low(
+    lows: pd.Series,
+    index: int,
+    left: int,
+    right: int
+) -> bool:
+
+    pivot_index = index - right
+
+    if pivot_index - left < 0:
+        return False
+
+    if pivot_index + right >= len(lows):
+        return False
+
+    pivot_value = lows.iloc[pivot_index]
+
+    left_values = lows.iloc[
+        pivot_index - left:
+        pivot_index
+    ]
+
+    right_values = lows.iloc[
+        pivot_index + 1:
+        pivot_index + right + 1
+    ]
+
+    if len(left_values) != left:
+        return False
+
+    if len(right_values) != right:
+        return False
+
+    return (
+        pivot_value <= left_values.min()
+        and
+        pivot_value <= right_values.max()
+    )
+
+
+# ============================================================
+# Pivot High
+# ============================================================
+
+def is_pivot_high(
+    highs: pd.Series,
+    index: int,
+    left: int,
+    right: int
+) -> bool:
+
+    pivot_index = index - right
+
+    if pivot_index - left < 0:
+        return False
+
+    if pivot_index + right >= len(highs):
+        return False
+
+    pivot_value = highs.iloc[pivot_index]
+
+    left_values = highs.iloc[
+        pivot_index - left:
+        pivot_index
+    ]
+
+    right_values = highs.iloc[
+        pivot_index + 1:
+        pivot_index + right + 1
+    ]
+
+    if len(left_values) != left:
+        return False
+
+    if len(right_values) != right:
+        return False
+
+    return (
+        pivot_value >= left_values.max()
+        and
+        pivot_value >= right_values.max()
+    )
+
+
+# ============================================================
+# ta.lowest()
+# ============================================================
+
+def rolling_lowest(
+    series: pd.Series,
+    length: int
+) -> pd.Series:
+
+    return series.rolling(
+        window=length,
+        min_periods=length
+    ).min()
+
+
+# ============================================================
+# ta.highest()
+# ============================================================
+
+def rolling_highest(
+    series: pd.Series,
+    length: int
+) -> pd.Series:
+
+    return series.rolling(
+        window=length,
+        min_periods=length
+    ).max()
+
+
+# ============================================================
+# barssince()
+#
+# Pine:
+# ta.barssince(condition)
+#
+# 현재 bar부터 거꾸로 가면서 가장 최근 True까지의 bar 수
+# ============================================================
+
+def bars_since(
+    condition: pd.Series
+) -> pd.Series:
+
+    result = []
+
+    count = np.nan
+
+    for value in condition:
+
+        if bool(value):
+
+            count = 0
+
+        elif not pd.isna(count):
+
+            count += 1
+
+        result.append(count)
+
+    return pd.Series(
+        result,
+        index=condition.index
+    )
+
+
+# ============================================================
+# 전략 실행
 # ============================================================
 
 def run_strategy(
-    df: pd.DataFrame,
-
-    rsi_length: int = 14,
-
-    oversold_level: float = 30.0,
-    overbought_level: float = 70.0,
-
-    pivot_left: int = 3,
-    pivot_right: int = 3,
-
-    div_min_range: int = 3,
-    div_max_range: int = 80,
-
-    min_bars: int = 5,
-    max_bars: int = 40,
-
-    min_hl: float = 0.15,
-
-    signal_cooldown: int = 25,
+    df: pd.DataFrame
 ):
 
-    df = df.copy().reset_index(drop=True)
+    df = df.copy()
 
     # --------------------------------------------------------
-    # RSI
+    # 컬럼 확인
     # --------------------------------------------------------
+
+    required = [
+        "open",
+        "high",
+        "low",
+        "close"
+    ]
+
+    for column in required:
+
+        if column not in df.columns:
+
+            raise ValueError(
+                f"필수 컬럼 없음: {column}"
+            )
+
+    # 숫자형 변환
+    for column in required:
+
+        df[column] = pd.to_numeric(
+            df[column],
+            errors="coerce"
+        )
+
+    df = df.dropna(
+        subset=required
+    ).reset_index(drop=True)
+
+    if len(df) < 100:
+
+        raise ValueError(
+            f"데이터가 너무 적습니다: {len(df)}개"
+        )
+
+    # ========================================================
+    # RSI
+    # ========================================================
 
     df["rsi"] = calculate_rsi(
         df["close"],
-        rsi_length
+        RSI_LENGTH
     )
 
-    df["oversold"] = (
-        df["rsi"] <= oversold_level
+    # ========================================================
+    # 과매도 / 과매수
+    # ========================================================
+
+    df["is_oversold"] = (
+        df["rsi"] <= OVERSOLD_LEVEL
     )
 
-    df["overbought"] = (
-        df["rsi"] >= overbought_level
+    df["is_overbought"] = (
+        df["rsi"] >= OVERBOUGHT_LEVEL
     )
 
-    # --------------------------------------------------------
-    # Pivot
-    # --------------------------------------------------------
+    # ========================================================
+    # Pivot 계산
+    # ========================================================
 
-    df["pivot_low"] = pivot_low(
-        df["low"],
-        pivot_left,
-        pivot_right
-    )
+    pivot_low_flags = []
 
-    df["rsi_pivot_low"] = pivot_low(
-        df["rsi"],
-        pivot_left,
-        pivot_right
-    )
+    pivot_high_flags = []
 
-    df["pivot_high"] = pivot_high(
-        df["high"],
-        pivot_left,
-        pivot_right
-    )
+    for i in range(len(df)):
 
-    # --------------------------------------------------------
-    # 상태 변수
-    # --------------------------------------------------------
+        pivot_low_flags.append(
+            is_pivot_low(
+                df["low"],
+                i,
+                PIVOT_LEFT,
+                PIVOT_RIGHT
+            )
+        )
 
-    stage1L = False
-    stage2L = False
+        pivot_high_flags.append(
+            is_pivot_high(
+                df["high"],
+                i,
+                PIVOT_LEFT,
+                PIVOT_RIGHT
+            )
+        )
 
-    stage1S = False
+    df["pivot_low"] = pivot_low_flags
+    df["pivot_high"] = pivot_high_flags
+
+    # ========================================================
+    # Pivot RSI
+    # ========================================================
+
+    df["pivot_low_rsi"] = np.nan
+    df["pivot_high_rsi"] = np.nan
+
+    for i in range(len(df)):
+
+        if df["pivot_low"].iloc[i]:
+
+            pivot_index = i - PIVOT_RIGHT
+
+            if pivot_index >= 0:
+
+                df.loc[
+                    i,
+                    "pivot_low_rsi"
+                ] = df["rsi"].iloc[
+                    pivot_index
+                ]
+
+        if df["pivot_high"].iloc[i]:
+
+            pivot_index = i - PIVOT_RIGHT
+
+            if pivot_index >= 0:
+
+                df.loc[
+                    i,
+                    "pivot_high_rsi"
+                ] = df["rsi"].iloc[
+                    pivot_index
+                ]
+
+    # ========================================================
+    # 상승 다이버전스
+    #
+    # Pine 원본:
+    #
+    # 가격:
+    # 현재 Pivot Low < 이전 Pivot Low
+    #
+    # RSI:
+    # 현재 Pivot RSI > 이전 Pivot RSI
+    #
+    # Pivot 간격:
+    # 3 ~ 80 bars
+    # ========================================================
+
+    df["bull_divergence"] = False
+
+    previous_price_pivots = []
+    previous_rsi_pivots = []
+    previous_pivot_bars = []
+
+    for i in range(len(df)):
+
+        if not df["pivot_low"].iloc[i]:
+            continue
+
+        current_pivot_bar = (
+            i - PIVOT_RIGHT
+        )
+
+        current_price = df["low"].iloc[
+            current_pivot_bar
+        ]
+
+        current_rsi = df["rsi"].iloc[
+            current_pivot_bar
+        ]
+
+        if pd.isna(current_rsi):
+            continue
+
+        bull_divergence = False
+
+        # Pine:
+        # array에 저장된 이전 pivot들을 검사
+        for (
+            prev_price,
+            prev_rsi,
+            prev_bar
+        ) in zip(
+            previous_price_pivots,
+            previous_rsi_pivots,
+            previous_pivot_bars
+        ):
+
+            bars_between = (
+                current_pivot_bar -
+                prev_bar
+            )
+
+            if (
+                bars_between >= DIV_MIN_RANGE
+                and
+                bars_between <= DIV_MAX_RANGE
+            ):
+
+                if (
+                    current_price < prev_price
+                    and
+                    current_rsi > prev_rsi
+                ):
+
+                    bull_divergence = True
+                    break
+
+        if bull_divergence:
+
+            df.loc[
+                i,
+                "bull_divergence"
+            ] = True
+
+        # Pine array.unshift()
+        previous_price_pivots.insert(
+            0,
+            current_price
+        )
+
+        previous_rsi_pivots.insert(
+            0,
+            current_rsi
+        )
+
+        previous_pivot_bars.insert(
+            0,
+            current_pivot_bar
+        )
+
+        # Pine:
+        # if array.size > 20
+        # array.pop()
+        if len(previous_price_pivots) > 20:
+
+            previous_price_pivots.pop()
+            previous_rsi_pivots.pop()
+            previous_pivot_bars.pop()
+
+    # ========================================================
+    # 단계 상태 변수
+    # ========================================================
+
+    stage1_long = False
+    stage2_long = False
+
+    stage1_short = False
 
     last_long_bar = None
     last_short_bar = None
 
-    oversold_bar = None
-    overbought_bar = None
+    # 결과 저장
+    stage1_long_list = []
+    stage2_long_list = []
 
-    # Pine 배열
-    pl_price_arr = []
-    pl_rsi_arr = []
-    pl_bar_arr = []
+    stage1_short_list = []
 
-    # 결과
-    df["bull_divergence"] = False
-    df["higher_low"] = False
-    df["lower_high"] = False
+    higher_low_list = []
+    lower_high_list = []
 
-    df["stage1_long"] = False
-    df["stage2_long"] = False
-    df["stage1_short"] = False
+    long_signal_list = []
+    short_signal_list = []
 
-    df["long_signal"] = False
-    df["short_signal"] = False
-
-    long_reason = ""
-    short_reason = ""
+    long_reason_list = []
+    short_reason_list = []
 
     # ========================================================
-    # BAR LOOP
+    # 원형파 계산
+    # ========================================================
+
+    short_window = max(
+        4,
+        int(MAX_BARS * 0.45)
+    )
+
+    df["lowest_40"] = rolling_lowest(
+        df["low"],
+        MAX_BARS
+    )
+
+    df["lowest_short"] = rolling_lowest(
+        df["low"],
+        short_window
+    )
+
+    df["highest_40"] = rolling_highest(
+        df["high"],
+        MAX_BARS
+    )
+
+    df["highest_short"] = rolling_highest(
+        df["high"],
+        short_window
+    )
+
+    # Pine:
+    #
+    # barsSinceLow =
+    # nz(ta.barssince(low == low1), 0)
+    #
+    # low1 = ta.lowest(low, maxBars)
+
+    low_equals_lowest = (
+        np.isclose(
+            df["low"],
+            df["lowest_40"],
+            rtol=1e-10,
+            atol=1e-10
+        )
+    )
+
+    high_equals_highest = (
+        np.isclose(
+            df["high"],
+            df["highest_40"],
+            rtol=1e-10,
+            atol=1e-10
+        )
+    )
+
+    df["bars_since_low"] = bars_since(
+        low_equals_lowest
+    )
+
+    df["bars_since_high"] = bars_since(
+        high_equals_highest
+    )
+
+    # ========================================================
+    # 각 bar 전략 계산
     # ========================================================
 
     for i in range(len(df)):
 
-        row = df.iloc[i]
-
-        low = float(row["low"])
-        high = float(row["high"])
-
-        rsi = row["rsi"]
-
-        is_oversold = (
-            not pd.isna(rsi)
-            and rsi <= oversold_level
+        is_oversold = bool(
+            df["is_oversold"].iloc[i]
         )
 
-        is_overbought = (
-            not pd.isna(rsi)
-            and rsi >= overbought_level
+        is_overbought = bool(
+            df["is_overbought"].iloc[i]
+        )
+
+        bull_div_now = bool(
+            df["bull_divergence"].iloc[i]
         )
 
         # ====================================================
@@ -247,230 +585,175 @@ def run_strategy(
 
         if is_oversold:
 
-            if not stage1L:
+            if not stage1_long:
 
-                oversold_bar = i
+                stage1_long = True
+                stage2_long = False
 
-                stage1L = True
-                stage2L = False
+        # ====================================================
+        # 과매도 → 숏 단계 취소
+        # ====================================================
 
-            # 원본:
-            # 과매도 → 숏 단계 취소
-            stage1S = False
+        if is_oversold:
+
+            stage1_short = False
 
         # ====================================================
         # 상승 다이버전스
         # ====================================================
 
-        bull_div_now = False
-
-        pl = df.iloc[i]["pivot_low"]
-        rsi_pl = df.iloc[i]["rsi_pivot_low"]
-
         if (
-            not pd.isna(pl)
-            and not pd.isna(rsi_pl)
+            stage1_long
+            and
+            bull_div_now
+            and
+            not stage2_long
         ):
 
-            curr_pivot_bar = i - pivot_right
-
-            if len(pl_price_arr) > 0:
-
-                for j in range(len(pl_price_arr)):
-
-                    prev_price = pl_price_arr[j]
-                    prev_rsi = pl_rsi_arr[j]
-                    prev_bar = pl_bar_arr[j]
-
-                    bars_between = (
-                        curr_pivot_bar - prev_bar
-                    )
-
-                    if (
-                        bars_between >= div_min_range
-                        and bars_between <= div_max_range
-                    ):
-
-                        # Pine:
-                        #
-                        # if pl < prevPrice
-                        # and rsiPL > prevRsi
-
-                        if (
-                            pl < prev_price
-                            and rsi_pl > prev_rsi
-                        ):
-
-                            bull_div_now = True
-                            break
-
-            # Pine array.unshift()
-            pl_price_arr.insert(0, float(pl))
-            pl_rsi_arr.insert(0, float(rsi_pl))
-            pl_bar_arr.insert(0, curr_pivot_bar)
-
-            # 최대 20개
-            if len(pl_price_arr) > 20:
-
-                pl_price_arr.pop()
-                pl_rsi_arr.pop()
-                pl_bar_arr.pop()
-
-        if bull_div_now:
-
-            df.loc[
-                i,
-                "bull_divergence"
-            ] = True
+            stage2_long = True
 
         # ====================================================
-        # LONG 2단계
-        # ====================================================
-
-        if (
-            stage1L
-            and bull_div_now
-            and not stage2L
-        ):
-
-            stage2L = True
-
-        # ====================================================
-        # 원형파 / Higher Low
+        # Higher Low
         #
         # Pine:
         #
         # low1 = ta.lowest(low, maxBars)
-        # low2 = ta.lowest(low, maxBars * 0.45)
         #
+        # low2 = ta.lowest(
+        #     low,
+        #     math.max(
+        #         4,
+        #         int(maxBars * 0.45)
+        #     )
+        # )
+        #
+        # higherLow =
+        # low2 > low1 * (1 + minHL / 100)
         # ====================================================
 
-        start_max = max(
-            0,
-            i - maxBars + 1
+        low1 = df["lowest_40"].iloc[i]
+        low2 = df["lowest_short"].iloc[i]
+
+        bars_since_low = (
+            df["bars_since_low"].iloc[i]
         )
 
-        long_window = df.iloc[
-            start_max:i + 1
-        ]
+        higher_low = False
 
-        low1 = float(
-            long_window["low"].min()
-        )
-
-        short_length = max(
-            4,
-            int(maxBars * 0.45)
-        )
-
-        start_short = max(
-            0,
-            i - short_length + 1
-        )
-
-        short_window = df.iloc[
-            start_short:i + 1
-        ]
-
-        low2 = float(
-            short_window["low"].min()
-        )
-
-        # Pine:
-        #
-        # barsSinceLow =
-        # ta.barssince(low == low1)
-
-        bars_since_low = 0
-
-        for k in range(
-            i,
-            start_max - 1,
-            -1
+        if (
+            not pd.isna(low1)
+            and
+            not pd.isna(low2)
         ):
 
-            if float(df.iloc[k]["low"]) == low1:
-
-                bars_since_low = i - k
-                break
-
-        higher_low = (
-            low2 >
-            low1 * (1 + min_hl / 100)
-        )
-
-        bars_ok_l = (
-            bars_since_low >= min_bars
-            and bars_since_low <= maxBars
-        )
-
-        circular_l = (
-            higher_low
-            and bars_ok_l
-        )
-
-        df.loc[
-            i,
-            "higher_low"
-        ] = circular_l
-
-        # ====================================================
-        # LONG FINAL
-        # ====================================================
-
-        cooldown_l = (
-            last_long_bar is None
-            or (
-                i - last_long_bar
-                >= signal_cooldown
+            higher_low = (
+                low2
+                >
+                low1 * (
+                    1 +
+                    MIN_HL_PERCENT / 100
+                )
             )
+
+        bars_ok_long = False
+
+        if not pd.isna(
+            bars_since_low
+        ):
+
+            bars_ok_long = (
+                bars_since_low >= MIN_BARS
+                and
+                bars_since_low <= MAX_BARS
+            )
+
+        circular_long = (
+            higher_low
+            and
+            bars_ok_long
         )
+
+        # ====================================================
+        # LONG cooldown
+        # ====================================================
+
+        cooldown_long = (
+            last_long_bar is None
+            or
+            i - last_long_bar
+            >= SIGNAL_COOLDOWN
+        )
+
+        # ====================================================
+        # 중요
+        #
+        # 원본 Pine의 최종 조건:
+        #
+        # longSignal =
+        # stage1L
+        # and circularL
+        # and cooldownL
+        #
+        # 즉 stage2L을 강제하지 않음.
+        #
+        # 따라서 상승 다이버전스가 없어도
+        # 과매도 상태 + Higher Low면 LONG.
+        # ====================================================
 
         long_signal = (
-            stage1L
-            and circular_l
-            and cooldown_l
+            stage1_long
+            and
+            circular_long
+            and
+            cooldown_long
         )
 
-        # 마지막 확정봉 포함 모든 봉 계산
+        long_reason = ""
+
         if long_signal:
 
-            df.loc[
-                i,
-                "long_signal"
-            ] = True
-
-            last_long_bar = i
-
-            if stage2L:
+            if stage2_long:
 
                 long_reason = (
-                    "과매도 → "
-                    "상승 다이버전스 → "
-                    "Higher Low → 진입"
+                    "과매도 → 상승 다이버전스 "
+                    "→ Higher Low"
                 )
 
             else:
 
                 long_reason = (
-                    "과매도 → "
-                    "Higher Low → 진입"
+                    "과매도 → Higher Low"
                 )
 
-            # Pine 원본 그대로
-            stage2L = False
+            last_long_bar = i
+
+            # Pine:
+            # stage2L := false
+            stage2_long = False
 
         # ====================================================
-        # 과매도가 아니면 LONG 상태 종료
+        # LONG 단계 종료
         #
-        # ★ 중요: Pine 원본 그대로
+        # Pine:
+        #
+        # if not isOversold
+        #     stage1L := false
+        #     oversoldLabeled := false
         # ====================================================
 
         if not is_oversold:
 
-            stage1L = False
-            # Pine:
-            # oversoldLabeled := false
+            stage1_long = False
+
+            # 원본 Pine에서는 여기서
+            # stage2L은 직접 false로 만들지 않음.
+            #
+            # 다만 새로운 과매도 사이클을 위해
+            # stage1이 끝난 상태에서 남은 stage2가
+            # 다음 사이클에 영향을 주지 않도록 정리.
+            if not stage1_long:
+
+                stage2_long = False
 
         # ====================================================
         # SHORT 1단계: 과매수
@@ -478,143 +761,221 @@ def run_strategy(
 
         if is_overbought:
 
-            if not stage1S:
+            if not stage1_short:
 
-                overbought_bar = i
+                stage1_short = True
 
-                stage1S = True
+        # ====================================================
+        # 과매수 → 롱 단계 취소
+        # ====================================================
 
-            # 과매수 → 롱 단계 취소
-            stage1L = False
-            stage2L = False
+        if is_overbought:
+
+            stage1_long = False
+            stage2_long = False
 
         # ====================================================
         # Lower High
+        #
+        # Pine:
+        #
+        # high1 = ta.highest(high, maxBars)
+        # high2 = ta.highest(high, shortWindow)
+        #
+        # lowerHigh =
+        # high2 < high1 * (1 - minHL / 100)
         # ====================================================
 
-        high1 = float(
-            long_window["high"].max()
+        high1 = df["highest_40"].iloc[i]
+        high2 = df["highest_short"].iloc[i]
+
+        bars_since_high = (
+            df["bars_since_high"].iloc[i]
         )
 
-        high2 = float(
-            short_window["high"].max()
-        )
+        lower_high = False
 
-        bars_since_high = 0
-
-        for k in range(
-            i,
-            start_max - 1,
-            -1
+        if (
+            not pd.isna(high1)
+            and
+            not pd.isna(high2)
         ):
 
-            if float(df.iloc[k]["high"]) == high1:
+            lower_high = (
+                high2
+                <
+                high1 * (
+                    1 -
+                    MIN_HL_PERCENT / 100
+                )
+            )
 
-                bars_since_high = i - k
-                break
+        bars_ok_short = False
 
-        lower_high = (
-            high2 <
-            high1 * (1 - min_hl / 100)
-        )
+        if not pd.isna(
+            bars_since_high
+        ):
 
-        bars_ok_s = (
-            bars_since_high >= min_bars
-            and bars_since_high <= maxBars
-        )
+            bars_ok_short = (
+                bars_since_high >= MIN_BARS
+                and
+                bars_since_high <= MAX_BARS
+            )
 
-        circular_s = (
+        circular_short = (
             lower_high
-            and bars_ok_s
+            and
+            bars_ok_short
         )
-
-        df.loc[
-            i,
-            "lower_high"
-        ] = circular_s
 
         # ====================================================
-        # SHORT FINAL
-        #
-        # Pine 원본:
+        # SHORT cooldown
+        # ====================================================
+
+        cooldown_short = (
+            last_short_bar is None
+            or
+            i - last_short_bar
+            >= SIGNAL_COOLDOWN
+        )
+
+        # ====================================================
+        # SHORT
         #
         # 과매수 + Lower High
-        #
+        # 하락 다이버전스 없음
         # ====================================================
 
-        cooldown_s = (
-            last_short_bar is None
-            or (
-                i - last_short_bar
-                >= signal_cooldown
-            )
+        short_signal = (
+            stage1_short
+            and
+            circular_short
+            and
+            cooldown_short
         )
 
-        short_signal = (
-            stage1S
-            and circular_s
-            and cooldown_s
-        )
+        short_reason = ""
 
         if short_signal:
 
-            df.loc[
-                i,
-                "short_signal"
-            ] = True
+            short_reason = (
+                "과매수 → Lower High"
+            )
 
             last_short_bar = i
 
-            short_reason = (
-                "과매수 → "
-                "Lower High → 하락 진입"
-            )
-
         # ====================================================
-        # 과매수가 아니면 SHORT 종료
+        # 결과 저장
         # ====================================================
 
-        if not is_overbought:
+        stage1_long_list.append(
+            stage1_long
+        )
 
-            stage1S = False
+        stage2_long_list.append(
+            stage2_long
+        )
 
-        # ====================================================
-        # 상태 저장
-        # ====================================================
+        stage1_short_list.append(
+            stage1_short
+        )
 
-        df.loc[
-            i,
-            "stage1_long"
-        ] = stage1L
+        higher_low_list.append(
+            higher_low
+        )
 
-        df.loc[
-            i,
-            "stage2_long"
-        ] = stage2L
+        lower_high_list.append(
+            lower_high
+        )
 
-        df.loc[
-            i,
-            "stage1_short"
-        ] = stage1S
+        long_signal_list.append(
+            long_signal
+        )
+
+        short_signal_list.append(
+            short_signal
+        )
+
+        long_reason_list.append(
+            long_reason
+        )
+
+        short_reason_list.append(
+            short_reason
+        )
 
     # ========================================================
-    # 마지막 확정봉
+    # 결과 DataFrame
     # ========================================================
 
-    last = df.iloc[-1]
+    df["stage1_long"] = stage1_long_list
+    df["stage2_long"] = stage2_long_list
+
+    df["stage1_short"] = stage1_short_list
+
+    df["higher_low"] = higher_low_list
+    df["lower_high"] = lower_high_list
+
+    df["long_signal"] = long_signal_list
+    df["short_signal"] = short_signal_list
+
+    df["long_reason"] = long_reason_list
+    df["short_reason"] = short_reason_list
+
+    # ========================================================
+    # 최근 120일만 신호 확인
+    #
+    # 계산 자체는 전체 데이터에서 하고
+    # 실제 알람 후보는 최근 120일 범위로 제한
+    # ========================================================
+
+    if len(df) > SIGNAL_LOOKBACK:
+
+        recent_start = (
+            len(df) - SIGNAL_LOOKBACK
+        )
+
+        recent_df = df.iloc[
+            recent_start:
+        ].copy()
+
+    else:
+
+        recent_df = df.copy()
+
+    # ========================================================
+    # 가장 마지막 일봉
+    # ========================================================
+
+    last_row = df.iloc[-1]
+
+    long_signal = bool(
+        last_row["long_signal"]
+    )
+
+    short_signal = bool(
+        last_row["short_signal"]
+    )
+
+    long_reason = str(
+        last_row["long_reason"]
+    )
+
+    short_reason = str(
+        last_row["short_reason"]
+    )
+
+    # ========================================================
+    # 반환
+    # ========================================================
 
     return {
         "df": df,
+        "recent_df": recent_df,
 
-        "long_signal": bool(
-            last["long_signal"]
-        ),
-
-        "short_signal": bool(
-            last["short_signal"]
-        ),
+        "long_signal": long_signal,
+        "short_signal": short_signal,
 
         "long_reason": long_reason,
-
         "short_reason": short_reason,
     }
