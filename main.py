@@ -260,25 +260,25 @@ def make_daily_report(
         "━━━━━━━━━━━━━━━━━━\n"
         "🟢 LONG 조건\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"🟠 과매도: "
+        f" 과매도: "
         f"{check_mark(row['stage1_long'])}\n"
-        f"🟢 상승 다이버전스: "
+        f" 상승 다이버전스: "
         f"{check_mark(row['bull_divergence'])}\n"
-        f"🔵 Higher Low: "
+        f" Higher Low: "
         f"{check_mark(row['higher_low'])}\n"
         f"▶ LONG: "
-        f"{'🚨 발생' if long_signal else '❌ 없음'}\n"
+        f"{'🚨 발생' if long_signal else '❌'}\n"
         f"조건: {long_reason}\n"
         "\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "🔴 SHORT 조건\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"🔴 과매수: "
+        f" 과매수: "
         f"{check_mark(row['stage1_short'])}\n"
-        f"🟣 Lower High: "
+        f" Lower High: "
         f"{check_mark(row['lower_high'])}\n"
         f"▶ SHORT: "
-        f"{'🚨 발생' if short_signal else '❌ 없음'}\n"
+        f"{'🚨 발생' if short_signal else '❌'}\n"
         f"조건: {short_reason}\n"
         "\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -287,9 +287,6 @@ def make_daily_report(
         "\n"
         "기준: 일봉\n"
         "계산 데이터: 최근 180일\n"
-        "관심 구간: 최근 120일\n"
-        "\n"
-        "X Trading Indicator"
     )
 
     return message
@@ -366,7 +363,6 @@ def main():
     print("X Trading Indicator")
     print("기준: 일봉")
     print("전략 계산 데이터: 최근 180일")
-    print("관심 구간: 최근 120일")
     print("Telegram: 매일 장 마감 후 리포트 전송")
     print("=" * 60)
 
