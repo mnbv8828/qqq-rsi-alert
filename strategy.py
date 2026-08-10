@@ -24,17 +24,24 @@ MIN_HL_PERCENT = 0.15
 
 SIGNAL_COOLDOWN = 25
 
-# 실제 신호를 확인할 최근 일수
+# 실제 신호 판단 구간
 SIGNAL_LOOKBACK = 120
 
 
 # ============================================================
 # RSI
-# TradingView ta.rsi()와 최대한 동일하게
-# Wilder RMA 방식 사용
+# TradingView ta.rsi()의 Wilder 방식에 맞춤
 # ============================================================
 
-def calculate_rsi(series: pd.Series, length: int = 14) -> pd.Series:
+def calculate_rsi(
+    series: pd.Series,
+    length: int = 14
+) -> pd.Series:
+
+    series = pd.to_numeric(
+        series,
+        errors="coerce"
+    )
 
     delta = series.diff()
 
@@ -53,19 +60,22 @@ def calculate_rsi(series: pd.Series, length: int = 14) -> pd.Series:
         min_periods=length
     ).mean()
 
-    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rs = (
+        avg_gain /
+        avg_loss.replace(0, np.nan)
+    )
 
-    rsi = 100 - (100 / (1 + rs))
+    rsi = 100 - (
+        100 / (1 + rs)
+    )
 
-    # 상승만 계속되는 경우 TradingView RSI의 100 처리
-    rsi = rsi.where(
-        avg_loss != 0,
+    rsi = rsi.mask(
+        avg_loss == 0,
         100
     )
 
-    # 하락만 계속되는 경우 0
-    rsi = rsi.where(
-        avg_gain != 0,
+    rsi = rsi.mask(
+        avg_gain == 0,
         0
     )
 
@@ -77,9 +87,6 @@ def calculate_rsi(series: pd.Series, length: int = 14) -> pd.Series:
 #
 # Pine:
 # ta.pivotlow(low, 3, 3)
-#
-# 현재 bar에서 pivot이 확정되지만,
-# 실제 pivot 위치는 3개 전 bar.
 # ============================================================
 
 def is_pivot_low(
@@ -97,7 +104,9 @@ def is_pivot_low(
     if pivot_index + right >= len(lows):
         return False
 
-    pivot_value = lows.iloc[pivot_index]
+    pivot_value = float(
+        lows.iloc[pivot_index]
+    )
 
     left_values = lows.iloc[
         pivot_index - left:
@@ -116,9 +125,9 @@ def is_pivot_low(
         return False
 
     return (
-        pivot_value <= left_values.min()
+        pivot_value <= float(left_values.min())
         and
-        pivot_value <= right_values.max()
+        pivot_value <= float(right_values.min())
     )
 
 
@@ -141,7 +150,9 @@ def is_pivot_high(
     if pivot_index + right >= len(highs):
         return False
 
-    pivot_value = highs.iloc[pivot_index]
+    pivot_value = float(
+        highs.iloc[pivot_index]
+    )
 
     left_values = highs.iloc[
         pivot_index - left:
@@ -160,54 +171,27 @@ def is_pivot_high(
         return False
 
     return (
-        pivot_value >= left_values.max()
+        pivot_value >= float(left_values.max())
         and
-        pivot_value >= right_values.max()
+        pivot_value >= float(right_values.max())
     )
 
 
 # ============================================================
-# ta.lowest()
-# ============================================================
-
-def rolling_lowest(
-    series: pd.Series,
-    length: int
-) -> pd.Series:
-
-    return series.rolling(
-        window=length,
-        min_periods=length
-    ).min()
-
-
-# ============================================================
-# ta.highest()
-# ============================================================
-
-def rolling_highest(
-    series: pd.Series,
-    length: int
-) -> pd.Series:
-
-    return series.rolling(
-        window=length,
-        min_periods=length
-    ).max()
-
-
-# ============================================================
-# barssince()
-#
-# Pine:
-# ta.barssince(condition)
-#
-# 현재 bar부터 거꾸로 가면서 가장 최근 True까지의 bar 수
+# barssince
 # ============================================================
 
 def bars_since(
     condition: pd.Series
 ) -> pd.Series:
+
+    # 반드시 Series로 변환
+    condition = pd.Series(
+        condition,
+        index=condition.index
+        if hasattr(condition, "index")
+        else None
+    )
 
     result = []
 
@@ -232,7 +216,7 @@ def bars_since(
 
 
 # ============================================================
-# 전략 실행
+# 전략
 # ============================================================
 
 def run_strategy(
@@ -241,9 +225,9 @@ def run_strategy(
 
     df = df.copy()
 
-    # --------------------------------------------------------
-    # 컬럼 확인
-    # --------------------------------------------------------
+    # ========================================================
+    # 컬럼 정리
+    # ========================================================
 
     required = [
         "open",
@@ -300,11 +284,10 @@ def run_strategy(
     )
 
     # ========================================================
-    # Pivot 계산
+    # Pivot
     # ========================================================
 
     pivot_low_flags = []
-
     pivot_high_flags = []
 
     for i in range(len(df)):
@@ -327,8 +310,17 @@ def run_strategy(
             )
         )
 
-    df["pivot_low"] = pivot_low_flags
-    df["pivot_high"] = pivot_high_flags
+    df["pivot_low"] = pd.Series(
+        pivot_low_flags,
+        index=df.index,
+        dtype=bool
+    )
+
+    df["pivot_high"] = pd.Series(
+        pivot_high_flags,
+        index=df.index,
+        dtype=bool
+    )
 
     # ========================================================
     # Pivot RSI
@@ -339,7 +331,7 @@ def run_strategy(
 
     for i in range(len(df)):
 
-        if df["pivot_low"].iloc[i]:
+        if bool(df["pivot_low"].iloc[i]):
 
             pivot_index = i - PIVOT_RIGHT
 
@@ -352,7 +344,7 @@ def run_strategy(
                     pivot_index
                 ]
 
-        if df["pivot_high"].iloc[i]:
+        if bool(df["pivot_high"].iloc[i]):
 
             pivot_index = i - PIVOT_RIGHT
 
@@ -368,8 +360,6 @@ def run_strategy(
     # ========================================================
     # 상승 다이버전스
     #
-    # Pine 원본:
-    #
     # 가격:
     # 현재 Pivot Low < 이전 Pivot Low
     #
@@ -380,7 +370,11 @@ def run_strategy(
     # 3 ~ 80 bars
     # ========================================================
 
-    df["bull_divergence"] = False
+    df["bull_divergence"] = pd.Series(
+        False,
+        index=df.index,
+        dtype=bool
+    )
 
     previous_price_pivots = []
     previous_rsi_pivots = []
@@ -388,16 +382,20 @@ def run_strategy(
 
     for i in range(len(df)):
 
-        if not df["pivot_low"].iloc[i]:
+        if not bool(
+            df["pivot_low"].iloc[i]
+        ):
             continue
 
         current_pivot_bar = (
             i - PIVOT_RIGHT
         )
 
-        current_price = df["low"].iloc[
-            current_pivot_bar
-        ]
+        current_price = float(
+            df["low"].iloc[
+                current_pivot_bar
+            ]
+        )
 
         current_rsi = df["rsi"].iloc[
             current_pivot_bar
@@ -406,10 +404,13 @@ def run_strategy(
         if pd.isna(current_rsi):
             continue
 
+        current_rsi = float(
+            current_rsi
+        )
+
         bull_divergence = False
 
-        # Pine:
-        # array에 저장된 이전 pivot들을 검사
+        # 이전 Pivot 검색
         for (
             prev_price,
             prev_rsi,
@@ -463,9 +464,7 @@ def run_strategy(
             current_pivot_bar
         )
 
-        # Pine:
-        # if array.size > 20
-        # array.pop()
+        # 최대 20개
         if len(previous_price_pivots) > 20:
 
             previous_price_pivots.pop()
@@ -473,7 +472,125 @@ def run_strategy(
             previous_pivot_bars.pop()
 
     # ========================================================
-    # 단계 상태 변수
+    # 원형파
+    # ========================================================
+
+    short_window = max(
+        4,
+        int(MAX_BARS * 0.45)
+    )
+
+    df["lowest_40"] = (
+        df["low"]
+        .rolling(
+            window=MAX_BARS,
+            min_periods=MAX_BARS
+        )
+        .min()
+    )
+
+    df["lowest_short"] = (
+        df["low"]
+        .rolling(
+            window=short_window,
+            min_periods=short_window
+        )
+        .min()
+    )
+
+    df["highest_40"] = (
+        df["high"]
+        .rolling(
+            window=MAX_BARS,
+            min_periods=MAX_BARS
+        )
+        .max()
+    )
+
+    df["highest_short"] = (
+        df["high"]
+        .rolling(
+            window=short_window,
+            min_periods=short_window
+        )
+        .max()
+    )
+
+    # ========================================================
+    # 중요 수정
+    #
+    # np.isclose()는 ndarray를 반환한다.
+    # 따라서 여기서는 Pandas Series를 직접 만든다.
+    # ========================================================
+
+    low_equals_lowest = pd.Series(
+        False,
+        index=df.index,
+        dtype=bool
+    )
+
+    valid_low = (
+        df["low"].notna()
+        &
+        df["lowest_40"].notna()
+    )
+
+    low_equals_lowest.loc[
+        valid_low
+    ] = (
+        np.abs(
+            df.loc[
+                valid_low,
+                "low"
+            ]
+            -
+            df.loc[
+                valid_low,
+                "lowest_40"
+            ]
+        )
+        <= 1e-10
+    )
+
+    high_equals_highest = pd.Series(
+        False,
+        index=df.index,
+        dtype=bool
+    )
+
+    valid_high = (
+        df["high"].notna()
+        &
+        df["highest_40"].notna()
+    )
+
+    high_equals_highest.loc[
+        valid_high
+    ] = (
+        np.abs(
+            df.loc[
+                valid_high,
+                "high"
+            ]
+            -
+            df.loc[
+                valid_high,
+                "highest_40"
+            ]
+        )
+        <= 1e-10
+    )
+
+    df["bars_since_low"] = bars_since(
+        low_equals_lowest
+    )
+
+    df["bars_since_high"] = bars_since(
+        high_equals_highest
+    )
+
+    # ========================================================
+    # 단계 변수
     # ========================================================
 
     stage1_long = False
@@ -484,7 +601,7 @@ def run_strategy(
     last_long_bar = None
     last_short_bar = None
 
-    # 결과 저장
+    # 결과 배열
     stage1_long_list = []
     stage2_long_list = []
 
@@ -500,69 +617,7 @@ def run_strategy(
     short_reason_list = []
 
     # ========================================================
-    # 원형파 계산
-    # ========================================================
-
-    short_window = max(
-        4,
-        int(MAX_BARS * 0.45)
-    )
-
-    df["lowest_40"] = rolling_lowest(
-        df["low"],
-        MAX_BARS
-    )
-
-    df["lowest_short"] = rolling_lowest(
-        df["low"],
-        short_window
-    )
-
-    df["highest_40"] = rolling_highest(
-        df["high"],
-        MAX_BARS
-    )
-
-    df["highest_short"] = rolling_highest(
-        df["high"],
-        short_window
-    )
-
-    # Pine:
-    #
-    # barsSinceLow =
-    # nz(ta.barssince(low == low1), 0)
-    #
-    # low1 = ta.lowest(low, maxBars)
-
-    low_equals_lowest = (
-        np.isclose(
-            df["low"],
-            df["lowest_40"],
-            rtol=1e-10,
-            atol=1e-10
-        )
-    )
-
-    high_equals_highest = (
-        np.isclose(
-            df["high"],
-            df["highest_40"],
-            rtol=1e-10,
-            atol=1e-10
-        )
-    )
-
-    df["bars_since_low"] = bars_since(
-        low_equals_lowest
-    )
-
-    df["bars_since_high"] = bars_since(
-        high_equals_highest
-    )
-
-    # ========================================================
-    # 각 bar 전략 계산
+    # 각 일봉 계산
     # ========================================================
 
     for i in range(len(df)):
@@ -580,7 +635,7 @@ def run_strategy(
         )
 
         # ====================================================
-        # LONG 1단계: 과매도
+        # LONG 1단계
         # ====================================================
 
         if is_oversold:
@@ -590,10 +645,7 @@ def run_strategy(
                 stage1_long = True
                 stage2_long = False
 
-        # ====================================================
-        # 과매도 → 숏 단계 취소
-        # ====================================================
-
+        # 과매도 → SHORT 취소
         if is_oversold:
 
             stage1_short = False
@@ -614,21 +666,6 @@ def run_strategy(
 
         # ====================================================
         # Higher Low
-        #
-        # Pine:
-        #
-        # low1 = ta.lowest(low, maxBars)
-        #
-        # low2 = ta.lowest(
-        #     low,
-        #     math.max(
-        #         4,
-        #         int(maxBars * 0.45)
-        #     )
-        # )
-        #
-        # higherLow =
-        # low2 > low1 * (1 + minHL / 100)
         # ====================================================
 
         low1 = df["lowest_40"].iloc[i]
@@ -647,9 +684,11 @@ def run_strategy(
         ):
 
             higher_low = (
-                low2
+                float(low2)
                 >
-                low1 * (
+                float(low1)
+                *
+                (
                     1 +
                     MIN_HL_PERCENT / 100
                 )
@@ -680,24 +719,19 @@ def run_strategy(
         cooldown_long = (
             last_long_bar is None
             or
-            i - last_long_bar
-            >= SIGNAL_COOLDOWN
+            (
+                i - last_long_bar
+                >= SIGNAL_COOLDOWN
+            )
         )
 
         # ====================================================
-        # 중요
-        #
-        # 원본 Pine의 최종 조건:
+        # 원본 Pine 그대로
         #
         # longSignal =
-        # stage1L
-        # and circularL
-        # and cooldownL
+        # stage1L and circularL and cooldownL
         #
-        # 즉 stage2L을 강제하지 않음.
-        #
-        # 따라서 상승 다이버전스가 없어도
-        # 과매도 상태 + Higher Low면 LONG.
+        # stage2L은 최종 조건에 포함되지 않음.
         # ====================================================
 
         long_signal = (
@@ -727,36 +761,16 @@ def run_strategy(
 
             last_long_bar = i
 
-            # Pine:
-            # stage2L := false
             stage2_long = False
 
-        # ====================================================
-        # LONG 단계 종료
-        #
-        # Pine:
-        #
-        # if not isOversold
-        #     stage1L := false
-        #     oversoldLabeled := false
-        # ====================================================
-
+        # 과매도 종료
         if not is_oversold:
 
             stage1_long = False
-
-            # 원본 Pine에서는 여기서
-            # stage2L은 직접 false로 만들지 않음.
-            #
-            # 다만 새로운 과매도 사이클을 위해
-            # stage1이 끝난 상태에서 남은 stage2가
-            # 다음 사이클에 영향을 주지 않도록 정리.
-            if not stage1_long:
-
-                stage2_long = False
+            stage2_long = False
 
         # ====================================================
-        # SHORT 1단계: 과매수
+        # SHORT 1단계
         # ====================================================
 
         if is_overbought:
@@ -765,10 +779,7 @@ def run_strategy(
 
                 stage1_short = True
 
-        # ====================================================
-        # 과매수 → 롱 단계 취소
-        # ====================================================
-
+        # 과매수 → LONG 취소
         if is_overbought:
 
             stage1_long = False
@@ -776,14 +787,6 @@ def run_strategy(
 
         # ====================================================
         # Lower High
-        #
-        # Pine:
-        #
-        # high1 = ta.highest(high, maxBars)
-        # high2 = ta.highest(high, shortWindow)
-        #
-        # lowerHigh =
-        # high2 < high1 * (1 - minHL / 100)
         # ====================================================
 
         high1 = df["highest_40"].iloc[i]
@@ -802,9 +805,11 @@ def run_strategy(
         ):
 
             lower_high = (
-                high2
+                float(high2)
                 <
-                high1 * (
+                float(high1)
+                *
+                (
                     1 -
                     MIN_HL_PERCENT / 100
                 )
@@ -835,15 +840,16 @@ def run_strategy(
         cooldown_short = (
             last_short_bar is None
             or
-            i - last_short_bar
-            >= SIGNAL_COOLDOWN
+            (
+                i - last_short_bar
+                >= SIGNAL_COOLDOWN
+            )
         )
 
         # ====================================================
         # SHORT
         #
         # 과매수 + Lower High
-        # 하락 다이버전스 없음
         # ====================================================
 
         short_signal = (
@@ -905,38 +911,65 @@ def run_strategy(
         )
 
     # ========================================================
-    # 결과 DataFrame
+    # 결과 저장
     # ========================================================
 
-    df["stage1_long"] = stage1_long_list
-    df["stage2_long"] = stage2_long_list
+    df["stage1_long"] = pd.Series(
+        stage1_long_list,
+        index=df.index,
+        dtype=bool
+    )
 
-    df["stage1_short"] = stage1_short_list
+    df["stage2_long"] = pd.Series(
+        stage2_long_list,
+        index=df.index,
+        dtype=bool
+    )
 
-    df["higher_low"] = higher_low_list
-    df["lower_high"] = lower_high_list
+    df["stage1_short"] = pd.Series(
+        stage1_short_list,
+        index=df.index,
+        dtype=bool
+    )
 
-    df["long_signal"] = long_signal_list
-    df["short_signal"] = short_signal_list
+    df["higher_low"] = pd.Series(
+        higher_low_list,
+        index=df.index,
+        dtype=bool
+    )
+
+    df["lower_high"] = pd.Series(
+        lower_high_list,
+        index=df.index,
+        dtype=bool
+    )
+
+    df["long_signal"] = pd.Series(
+        long_signal_list,
+        index=df.index,
+        dtype=bool
+    )
+
+    df["short_signal"] = pd.Series(
+        short_signal_list,
+        index=df.index,
+        dtype=bool
+    )
 
     df["long_reason"] = long_reason_list
     df["short_reason"] = short_reason_list
 
     # ========================================================
-    # 최근 120일만 신호 확인
+    # 최근 120일
     #
-    # 계산 자체는 전체 데이터에서 하고
-    # 실제 알람 후보는 최근 120일 범위로 제한
+    # 계산은 180일 전체에서 수행
+    # 실제 관심 구간만 최근 120일
     # ========================================================
 
     if len(df) > SIGNAL_LOOKBACK:
 
-        recent_start = (
-            len(df) - SIGNAL_LOOKBACK
-        )
-
         recent_df = df.iloc[
-            recent_start:
+            -SIGNAL_LOOKBACK:
         ].copy()
 
     else:
@@ -944,7 +977,7 @@ def run_strategy(
         recent_df = df.copy()
 
     # ========================================================
-    # 가장 마지막 일봉
+    # 마지막 일봉
     # ========================================================
 
     last_row = df.iloc[-1]
