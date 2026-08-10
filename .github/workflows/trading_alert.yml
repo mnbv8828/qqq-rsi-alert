@@ -1,74 +1,36 @@
-name: X Trading Indicator Daily
+name: QQQ Daily Trading Report
 
 on:
+  schedule:
+    # 미국장 마감 후 한국시간 05:10
+    # 20:10 UTC
+    - cron: "10 20 * * 1-5"
+
   workflow_dispatch:
 
-  schedule:
-    # 미국장 마감 후 실행
-    #
-    # UTC 21:10
-    # 한국시간 06:10
-    #
-    # 월~금
-    - cron: "10 21 * * 1-5"
-
-
 jobs:
-
-  trading-alert:
-
+  run-trading-indicator:
     runs-on: ubuntu-latest
 
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      CHAT_ID: ${{ secrets.CHAT_ID }}
+      TICKERS: QQQ
+
     steps:
-
-      # ======================================================
-      # GitHub 저장소 가져오기
-      # ======================================================
-
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-
-      # ======================================================
-      # Python 설치
-      # ======================================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-
-      # ======================================================
-      # 라이브러리 설치
-      # ======================================================
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-
-      # ======================================================
-      # 전략 실행
-      # ======================================================
+          pip install pandas requests yfinance numpy
 
       - name: Run Trading Indicator
-        env:
-
-          # GitHub Secrets
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-
-          # 감시할 종목
-          #
-          # 하나:
-          # QQQ
-          #
-          # 여러 개:
-          # QQQ,SPY,TSLA,NVDA,AAPL
-          #
-          TICKERS: QQQ
-
         run: |
           python main.py
