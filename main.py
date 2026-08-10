@@ -1,7 +1,5 @@
-import json
 import os
 import sys
-from datetime import datetime
 
 import pandas as pd
 import requests
@@ -26,61 +24,16 @@ TICKERS = [
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-STATE_FILE = "alert_state.json"
-
-
-# ============================================================
-# 상태
-# ============================================================
-
-def load_state():
-
-    if not os.path.exists(STATE_FILE):
-
-        return {}
-
-    try:
-
-        with open(
-            STATE_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
-            return json.load(f)
-
-    except Exception:
-
-        return {}
-
-
-def save_state(state):
-
-    with open(
-        STATE_FILE,
-        "w",
-        encoding="utf-8"
-    ) as f:
-
-        json.dump(
-            state,
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
-
 
 # ============================================================
 # Telegram
 # ============================================================
 
-def send_telegram(message):
+def send_telegram(message: str) -> bool:
 
     if not BOT_TOKEN or not CHAT_ID:
 
-        print(
-            "BOT_TOKEN 또는 CHAT_ID가 없습니다."
-        )
+        print("ERROR: BOT_TOKEN 또는 CHAT_ID가 없습니다.")
 
         return False
 
@@ -118,10 +71,10 @@ def send_telegram(message):
 
 
 # ============================================================
-# Yahoo Finance
+# Yahoo Finance 일봉 데이터
 # ============================================================
 
-def get_data(ticker):
+def get_data(ticker: str) -> pd.DataFrame:
 
     print(
         f"[{ticker}] 최근 180일 일봉 다운로드"
@@ -139,10 +92,13 @@ def get_data(ticker):
     if df.empty:
 
         raise RuntimeError(
-            f"{ticker}: 데이터 없음"
+            f"{ticker}: Yahoo Finance 데이터가 없습니다."
         )
 
+    # --------------------------------------------------------
     # yfinance MultiIndex 대응
+    # --------------------------------------------------------
+
     if isinstance(
         df.columns,
         pd.MultiIndex
@@ -152,6 +108,10 @@ def get_data(ticker):
             df.columns
             .get_level_values(0)
         )
+
+    # --------------------------------------------------------
+    # 컬럼 이름 변경
+    # --------------------------------------------------------
 
     df = df.rename(
         columns={
@@ -163,126 +123,198 @@ def get_data(ticker):
         }
     )
 
-    required = [
+    required_columns = [
         "open",
         "high",
         "low",
         "close",
     ]
 
-    for col in required:
+    for column in required_columns:
 
-        if col not in df.columns:
+        if column not in df.columns:
 
             raise RuntimeError(
-                f"{ticker}: {col} 없음"
+                f"{ticker}: {column} 데이터가 없습니다."
             )
 
     df = df[
-        required
+        required_columns
     ].dropna()
 
-    # 최근 120일만 전략 신호 확인
-    # 계산 자체는 180일 데이터로 수행
+    if len(df) < 100:
+
+        raise RuntimeError(
+            f"{ticker}: 일봉 데이터가 너무 적습니다. "
+            f"현재 {len(df)}개"
+        )
+
+    # --------------------------------------------------------
+    # 날짜 컬럼
+    # --------------------------------------------------------
+
+    df["date"] = [
+        str(index.date())
+        if hasattr(index, "date")
+        else str(index)
+        for index in df.index
+    ]
+
+    df = df.reset_index(drop=True)
+
     return df
 
 
 # ============================================================
-# 가격
+# 가격 표시
 # ============================================================
 
-def fmt_price(value):
+def format_price(value) -> str:
 
     return f"{float(value):,.2f}"
 
 
 # ============================================================
-# Telegram 메시지
+# LONG 메시지
 # ============================================================
 
 def make_long_message(
-    ticker,
-    row,
-    reason
-):
-
-    date = str(
-        row["date"]
-    )
+    ticker: str,
+    row: pd.Series,
+    reason: str
+) -> str:
 
     return (
         "🟢 LONG 진입 신호\n"
         "\n"
         f"종목: {ticker}\n"
-        f"일봉: {date}\n"
-        f"현재가: ${fmt_price(row['close'])}\n"
+        f"일봉: {row['date']}\n"
+        f"현재가: ${format_price(row['close'])}\n"
         f"RSI: {row['rsi']:.2f}\n"
         "\n"
         f"조건: {reason}\n"
         "\n"
-        "X Trading Indicator"
+        "📌 X Trading Indicator\n"
+        "과매도 → 상승 다이버전스 → Higher Low"
     )
 
+
+# ============================================================
+# SHORT 메시지
+# ============================================================
 
 def make_short_message(
-    ticker,
-    row,
-    reason
-):
-
-    date = str(
-        row["date"]
-    )
+    ticker: str,
+    row: pd.Series,
+    reason: str
+) -> str:
 
     return (
         "🔴 SHORT 진입 신호\n"
         "\n"
         f"종목: {ticker}\n"
-        f"일봉: {date}\n"
-        f"현재가: ${fmt_price(row['close'])}\n"
+        f"일봉: {row['date']}\n"
+        f"현재가: ${format_price(row['close'])}\n"
         f"RSI: {row['rsi']:.2f}\n"
         "\n"
         f"조건: {reason}\n"
         "\n"
-        "X Trading Indicator"
+        "📌 X Trading Indicator\n"
+        "과매수 → Lower High"
     )
 
 
 # ============================================================
-# 메인
+# 상태 출력
+# ============================================================
+
+def print_status(
+    ticker: str,
+    row: pd.Series
+):
+
+    print()
+    print("=" * 60)
+    print(f"[{ticker}]")
+    print("=" * 60)
+
+    print(
+        f"일봉: {row['date']}"
+    )
+
+    print(
+        f"가격: ${format_price(row['close'])}"
+    )
+
+    print(
+        f"RSI: {row['rsi']:.2f}"
+    )
+
+    print(
+        f"과매도: {row['stage1_long']}"
+    )
+
+    print(
+        f"상승 다이버전스: {row['bull_divergence']}"
+    )
+
+    print(
+        f"Higher Low: {row['higher_low']}"
+    )
+
+    print(
+        f"과매수: {row['stage1_short']}"
+    )
+
+    print(
+        f"Lower High: {row['lower_high']}"
+    )
+
+    print(
+        f"LONG: {row['long_signal']}"
+    )
+
+    print(
+        f"SHORT: {row['short_signal']}"
+    )
+
+
+# ============================================================
+# MAIN
 # ============================================================
 
 def main():
 
+    print("=" * 60)
+    print("X Trading Indicator")
+    print("기준: 일봉")
+    print("전략 계산 데이터: 최근 180일")
+    print("관심 구간: 최근 120일")
+    print("=" * 60)
+
+    # --------------------------------------------------------
+    # Telegram 설정 확인
+    # --------------------------------------------------------
+
     if not BOT_TOKEN or not CHAT_ID:
 
         print(
-            "GitHub Secrets에 "
+            "ERROR: GitHub Secrets에 "
             "BOT_TOKEN / CHAT_ID를 설정하세요."
         )
 
         sys.exit(1)
 
-    state = load_state()
-
-    print("=" * 60)
-    print("X Trading Indicator")
-    print("기준: 최근 120일 / 일봉")
-    print("=" * 60)
+    # --------------------------------------------------------
+    # 종목별 검사
+    # --------------------------------------------------------
 
     for ticker in TICKERS:
 
         try:
 
+            # 데이터 다운로드
             df = get_data(ticker)
-
-            # 날짜를 별도 컬럼으로 저장
-            df["date"] = [
-                str(x.date())
-                if hasattr(x, "date")
-                else str(x)
-                for x in df.index
-            ]
 
             # ------------------------------------------------
             # 전략 계산
@@ -292,159 +324,80 @@ def main():
 
             result_df = result["df"]
 
-            # 마지막 확정 일봉
+            # 마지막 일봉
             row = result_df.iloc[-1]
 
-            signal_date = str(
-                row["date"]
-            )
-
-            print()
-            print(
-                f"[{ticker}] "
-                f"{signal_date}"
-            )
-
-            print(
-                f"가격: "
-                f"${fmt_price(row['close'])}"
-            )
-
-            print(
-                f"RSI: "
-                f"{row['rsi']:.2f}"
-            )
-
-            print(
-                "과매도: "
-                f"{row['stage1_long']}"
-            )
-
-            print(
-                "상승 다이버전스: "
-                f"{row['bull_divergence']}"
-            )
-
-            print(
-                "Higher Low: "
-                f"{row['higher_low']}"
-            )
-
-            print(
-                "과매수: "
-                f"{row['stage1_short']}"
-            )
-
-            print(
-                "Lower High: "
-                f"{row['lower_high']}"
+            # 상태 출력
+            print_status(
+                ticker,
+                row
             )
 
             # ------------------------------------------------
-            # 최근 120일 범위 확인
-            # ------------------------------------------------
-
-            # 데이터 자체는 180일을 사용하지만
-            # 알람은 마지막 봉 기준
-            #
-            # signal key:
-            # ticker + 날짜 + 방향
-            #
-            # 같은 일봉에서 중복 Telegram 방지
-            # ------------------------------------------------
-
             # LONG
+            # ------------------------------------------------
+
             if result["long_signal"]:
 
-                signal_key = (
-                    f"{ticker}_"
-                    f"{signal_date}_LONG"
+                message = make_long_message(
+                    ticker,
+                    row,
+                    result["long_reason"]
                 )
 
-                if not state.get(
-                    signal_key,
-                    False
-                ):
+                print()
+                print("🟢 LONG 신호 발생!")
 
-                    message = (
-                        make_long_message(
-                            ticker,
-                            row,
-                            result[
-                                "long_reason"
-                            ]
-                        )
-                    )
+                send_telegram(
+                    message
+                )
 
-                    if send_telegram(
-                        message
-                    ):
-
-                        state[
-                            signal_key
-                        ] = True
-
-                else:
-
-                    print(
-                        "이미 보낸 LONG 신호"
-                    )
-
+            # ------------------------------------------------
             # SHORT
+            # ------------------------------------------------
+
             elif result["short_signal"]:
 
-                signal_key = (
-                    f"{ticker}_"
-                    f"{signal_date}_SHORT"
+                message = make_short_message(
+                    ticker,
+                    row,
+                    result["short_reason"]
                 )
 
-                if not state.get(
-                    signal_key,
-                    False
-                ):
+                print()
+                print("🔴 SHORT 신호 발생!")
 
-                    message = (
-                        make_short_message(
-                            ticker,
-                            row,
-                            result[
-                                "short_reason"
-                            ]
-                        )
-                    )
+                send_telegram(
+                    message
+                )
 
-                    if send_telegram(
-                        message
-                    ):
-
-                        state[
-                            signal_key
-                        ] = True
-
-                else:
-
-                    print(
-                        "이미 보낸 SHORT 신호"
-                    )
+            # ------------------------------------------------
+            # 신호 없음
+            # ------------------------------------------------
 
             else:
 
-                print(
-                    "→ 현재 신호 없음"
-                )
+                print()
+                print("→ 현재 진입 신호 없음")
 
         except Exception as e:
 
+            print()
             print(
-                f"[{ticker}] 오류: {e}"
+                f"❌ [{ticker}] 오류 발생:"
             )
 
-    save_state(state)
+            print(e)
 
     print()
-    print("완료")
+    print("=" * 60)
+    print("실행 완료")
+    print("=" * 60)
 
+
+# ============================================================
+# 실행
+# ============================================================
 
 if __name__ == "__main__":
-
     main()
