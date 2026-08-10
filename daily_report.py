@@ -106,10 +106,7 @@ def main():
 
     print("현재 뉴욕 시간:", now_ny)
 
-    # 미국장 마감 후에만 리포트
-    if now_ny.hour != 16:
-        print("현재 미국장 마감 리포트 시간이 아닙니다.")
-        return
+ 
 
     close = get_daily_data()
 
