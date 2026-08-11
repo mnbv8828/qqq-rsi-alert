@@ -1797,10 +1797,7 @@ ${price:.2f}
 
 """
 
-    report += (
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🤖 자동 분석 완료"
-    )
+    report
 
     return report
 
