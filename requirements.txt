@@ -1,4 +1,5 @@
 pandas
 numpy
-yfinance
 requests
+yfinance
+pandas_market_calendars
