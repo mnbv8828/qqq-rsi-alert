@@ -1629,38 +1629,23 @@ META / NVDA / TSLA / PLTR
             "━━━━━━━━━━━━━━━━━━\n"
         )
 
-        for result in tech_results:
+                for result in tech_results:
 
-            ticker = result[
-                "ticker"
-            ]
+            ticker = result["ticker"]
 
-            price = result[
-                "price"
-            ]
+            price = result["price"]
 
-            change = result[
-                "change"
-            ]
+            change = result["change"]
 
-            daily_rsi = result[
-                "daily_rsi"
-            ]
+            daily_rsi = result["daily_rsi"]
 
-            weekly_rsi = result[
-                "weekly_rsi"
-            ]
+            weekly_rsi = result["weekly_rsi"]
 
-            buy_conditions = result[
-                "buy_conditions"
-            ]
+            buy_conditions = result["buy_conditions"]
 
-            condition_text = (
-                "\n".join(
-                    f"• {condition}"
-                    for condition
-                    in buy_conditions
-                )
+            condition_text = "\n".join(
+                f"• {condition}"
+                for condition in buy_conditions
             )
 
             report += f"""
@@ -1684,7 +1669,7 @@ ${price:.2f}
 
 """
 
-    report += ( )
+    report += "\n━━━━━━━━━━━━━━━━━━"
 
     return report
 
