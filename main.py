@@ -20,6 +20,13 @@ TEST_MODE = (
     os.environ.get("TEST_MODE", "false").lower() == "true"
 )
 
+NY_TZ = ZoneInfo("America/New_York")
+
+
+# ============================================================
+# 분석 종목
+# ============================================================
+
 TICKERS = [
     "QQQ",
     "SPY",
@@ -35,11 +42,15 @@ TICKERS = [
     "PLTR",
 ]
 
+
+# 항상 표시
 ALWAYS_SHOW = {
     "QQQ",
     "SPY",
 }
 
+
+# 매수조건 발생 시에만 표시
 TECH_STOCKS = {
     "MSFT",
     "AMZN",
@@ -75,8 +86,6 @@ MIN_HL_PERCENT = 0.15
 SIGNAL_COOLDOWN = 25
 
 SIGNAL_LOOKBACK = 120
-
-NY_TZ = ZoneInfo("America/New_York")
 
 
 # ============================================================
@@ -182,15 +191,14 @@ def calculate_rsi(
 # RSI 표시
 #
 # RSI <= 35
-# → 숫자 앞에 🟢 표시
+# → 숫자 앞에 초록색 원
 #
-# 실제 매수조건 RSI 기준은 여전히 30
+# 실제 매수조건 RSI 기준은 30
 # ============================================================
 
 def format_rsi(rsi):
 
     if rsi <= 35:
-
         return f"🟢 {rsi:.2f}"
 
     return f"{rsi:.2f}"
@@ -211,24 +219,34 @@ def get_nyse_market_close(now_ny):
     schedule = nyse.schedule(
         start_date=today,
         end_date=today,
-        tz="America/New_York",
     )
 
     if schedule.empty:
-
         return None
 
-    return schedule.iloc[0][
+    market_close = schedule.iloc[0][
         "market_close"
     ]
 
+    # UTC timestamp를 뉴욕시간으로 변환
+    if market_close.tzinfo is None:
+        market_close = market_close.tz_localize(
+            "UTC"
+        )
+
+    market_close = market_close.tz_convert(
+        "America/New_York"
+    )
+
+    return market_close
+
 
 # ============================================================
-# 미국장 상태
+# 미국장 상태 확인
 #
 # 휴장일 자동 처리
 # 조기폐장 자동 처리
-# 서머타임 / 겨울시간 자동 처리
+# 서머타임/겨울시간 자동 처리
 # ============================================================
 
 def check_market_status():
@@ -264,6 +282,10 @@ def check_market_status():
             now_ny,
         )
 
+    # --------------------------------------------------------
+    # NYSE 실제 마감시간
+    # --------------------------------------------------------
+
     market_close = (
         get_nyse_market_close(
             now_ny
@@ -294,7 +316,7 @@ def check_market_status():
     )
 
     # --------------------------------------------------------
-    # 장 마감 전
+    # 아직 장이 안 끝남
     # --------------------------------------------------------
 
     if now_ny < market_close:
@@ -310,7 +332,7 @@ def check_market_status():
         )
 
     # --------------------------------------------------------
-    # 마감 후 60분까지만 자동 실행
+    # 마감 후 60분 이내만 실행
     # --------------------------------------------------------
 
     elapsed = (
@@ -323,7 +345,7 @@ def check_market_status():
     ):
 
         print(
-            "NYSE 마감 후 60분이 지났습니다."
+            "미국장 마감 후 60분이 지났습니다."
         )
 
         return (
@@ -509,6 +531,10 @@ def run_strategy(
         "close",
     ]
 
+    # --------------------------------------------------------
+    # 컬럼 확인
+    # --------------------------------------------------------
+
     for column in required:
 
         if column not in df.columns:
@@ -516,6 +542,10 @@ def run_strategy(
             raise ValueError(
                 f"필수 컬럼 없음: {column}"
             )
+
+    # --------------------------------------------------------
+    # 숫자 변환
+    # --------------------------------------------------------
 
     for column in required:
 
@@ -537,9 +567,9 @@ def run_strategy(
             f"{len(df)}개"
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # RSI
-    # --------------------------------------------------------
+    # ========================================================
 
     df["rsi"] = calculate_rsi(
         df["close"],
@@ -556,9 +586,9 @@ def run_strategy(
         OVERBOUGHT_LEVEL
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Pivot
-    # --------------------------------------------------------
+    # ========================================================
 
     pivot_low_flags = []
     pivot_high_flags = []
@@ -595,9 +625,9 @@ def run_strategy(
         dtype=bool,
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Pivot RSI
-    # --------------------------------------------------------
+    # ========================================================
 
     df["pivot_low_rsi"] = np.nan
     df["pivot_high_rsi"] = np.nan
@@ -638,9 +668,9 @@ def run_strategy(
                     pivot_index
                 ]
 
-    # --------------------------------------------------------
-    # Bullish Divergence
-    # --------------------------------------------------------
+    # ========================================================
+    # 상승 다이버전스
+    # ========================================================
 
     df["bull_divergence"] = pd.Series(
         False,
@@ -657,6 +687,7 @@ def run_strategy(
         if not bool(
             df["pivot_low"].iloc[i]
         ):
+
             continue
 
         current_pivot_bar = (
@@ -675,7 +706,10 @@ def run_strategy(
             ]
         )
 
-        if pd.isna(current_rsi):
+        if pd.isna(
+            current_rsi
+        ):
+
             continue
 
         current_rsi = float(
@@ -748,9 +782,9 @@ def run_strategy(
             previous_rsi_pivots.pop()
             previous_pivot_bars.pop()
 
-    # --------------------------------------------------------
+    # ========================================================
     # 원형파
-    # --------------------------------------------------------
+    # ========================================================
 
     short_window = max(
         4,
@@ -794,6 +828,10 @@ def run_strategy(
         )
         .max()
     )
+
+    # ========================================================
+    # 최저점 / 최고점
+    # ========================================================
 
     low_equals_lowest = pd.Series(
         False,
@@ -861,12 +899,13 @@ def run_strategy(
         high_equals_highest
     )
 
-    # --------------------------------------------------------
-    # 단계 변수
-    # --------------------------------------------------------
+    # ========================================================
+    # 상태 변수
+    # ========================================================
 
     stage1_long = False
     stage2_long = False
+
     stage1_short = False
 
     last_long_bar = None
@@ -878,9 +917,9 @@ def run_strategy(
     long_reason_list = []
     short_reason_list = []
 
-    # --------------------------------------------------------
-    # 일봉 계산
-    # --------------------------------------------------------
+    # ========================================================
+    # 각 봉 계산
+    # ========================================================
 
     for i in range(len(df)):
 
@@ -896,7 +935,9 @@ def run_strategy(
             df["bull_divergence"].iloc[i]
         )
 
+        # ====================================================
         # LONG 1단계
+        # ====================================================
 
         if is_oversold:
 
@@ -911,7 +952,9 @@ def run_strategy(
 
             stage1_short = False
 
+        # ====================================================
         # 상승 다이버전스
+        # ====================================================
 
         if (
             stage1_long
@@ -923,7 +966,9 @@ def run_strategy(
 
             stage2_long = True
 
+        # ====================================================
         # Higher Low
+        # ====================================================
 
         low1 = df[
             "lowest_40"
@@ -963,9 +1008,11 @@ def run_strategy(
         ):
 
             bars_ok_long = (
-                bars_since_low >= MIN_BARS
+                bars_since_low >=
+                MIN_BARS
                 and
-                bars_since_low <= MAX_BARS
+                bars_since_low <=
+                MAX_BARS
             )
 
         circular_long = (
@@ -974,16 +1021,23 @@ def run_strategy(
             bars_ok_long
         )
 
+        # ====================================================
         # LONG cooldown
+        # ====================================================
 
         cooldown_long = (
             last_long_bar is None
             or
             (
-                i - last_long_bar
+                i -
+                last_long_bar
                 >= SIGNAL_COOLDOWN
             )
         )
+
+        # ====================================================
+        # LONG Signal
+        # ====================================================
 
         long_signal = (
             stage1_long
@@ -1013,6 +1067,7 @@ def run_strategy(
                 )
 
             last_long_bar = i
+
             stage2_long = False
 
         # 과매도 종료
@@ -1022,9 +1077,9 @@ def run_strategy(
             stage1_long = False
             stage2_long = False
 
-        # ----------------------------------------------------
-        # SHORT 계산
-        # ----------------------------------------------------
+        # ====================================================
+        # SHORT 1단계
+        # ====================================================
 
         if is_overbought:
 
@@ -1032,10 +1087,16 @@ def run_strategy(
 
                 stage1_short = True
 
+        # 과매수 → LONG 취소
+
         if is_overbought:
 
             stage1_long = False
             stage2_long = False
+
+        # ====================================================
+        # Lower High
+        # ====================================================
 
         high1 = df[
             "highest_40"
@@ -1075,9 +1136,11 @@ def run_strategy(
         ):
 
             bars_ok_short = (
-                bars_since_high >= MIN_BARS
+                bars_since_high >=
+                MIN_BARS
                 and
-                bars_since_high <= MAX_BARS
+                bars_since_high <=
+                MAX_BARS
             )
 
         circular_short = (
@@ -1086,14 +1149,23 @@ def run_strategy(
             bars_ok_short
         )
 
+        # ====================================================
+        # SHORT cooldown
+        # ====================================================
+
         cooldown_short = (
             last_short_bar is None
             or
             (
-                i - last_short_bar
+                i -
+                last_short_bar
                 >= SIGNAL_COOLDOWN
             )
         )
+
+        # ====================================================
+        # SHORT Signal
+        # ====================================================
 
         short_signal = (
             stage1_short
@@ -1113,6 +1185,10 @@ def run_strategy(
 
             last_short_bar = i
 
+        # ====================================================
+        # 결과 저장
+        # ====================================================
+
         long_signal_list.append(
             long_signal
         )
@@ -1129,9 +1205,9 @@ def run_strategy(
             short_reason
         )
 
-    # --------------------------------------------------------
-    # 결과
-    # --------------------------------------------------------
+    # ========================================================
+    # 결과 저장
+    # ========================================================
 
     df["long_signal"] = pd.Series(
         long_signal_list,
@@ -1152,6 +1228,8 @@ def run_strategy(
     df["short_reason"] = (
         short_reason_list
     )
+
+    # 최근 120일
 
     if len(df) > SIGNAL_LOOKBACK:
 
@@ -1322,20 +1400,27 @@ def analyze_ticker(
         last_date,
     )
 
-    # 자동 실행에서는 오늘 데이터만 허용
-    # 테스트에서는 최근 거래일 사용
+    # --------------------------------------------------------
+    # 자동 실행
+    # 오늘 데이터가 아니면 제외
+    # --------------------------------------------------------
 
     if (
         last_date != today_ny
-        and not TEST_MODE
+        and
+        not TEST_MODE
     ):
 
         print(
             f"{ticker}: "
-            "오늘 데이터 없음"
+            "오늘 거래일 데이터 없음"
         )
 
         return None
+
+    # --------------------------------------------------------
+    # TEST MODE
+    # --------------------------------------------------------
 
     if (
         TEST_MODE
@@ -1344,9 +1429,14 @@ def analyze_ticker(
     ):
 
         print(
-            f"{ticker}: TEST MODE → "
+            f"{ticker}: "
+            f"TEST MODE → "
             f"최근 거래일 {last_date} 사용"
         )
+
+    # --------------------------------------------------------
+    # 가격
+    # --------------------------------------------------------
 
     price = float(
         df["close"].iloc[-1]
@@ -1436,6 +1526,25 @@ def analyze_ticker(
         len(buy_conditions) > 0
     )
 
+    print(
+        f"{ticker}: "
+        f"일봉 RSI={daily_rsi:.2f}, "
+        f"주봉 RSI={weekly_rsi:.2f}"
+    )
+
+    if buy_condition:
+
+        print(
+            f"{ticker}: 매수조건 발생"
+        )
+
+    else:
+
+        print(
+            f"{ticker}: "
+            "매수조건 없음 → 제외"
+        )
+
     return {
         "ticker": ticker,
         "date": last_date,
@@ -1454,40 +1563,32 @@ def analyze_ticker(
 
 
 # ============================================================
-# 종목 한 개 리포트
+# QQQ / SPY 리포트
 # ============================================================
 
-def format_result(
+def format_basic_result(
     result,
 ):
 
-    ticker = result["ticker"]
-
-    price = result["price"]
-
-    change = result["change"]
-
-    daily_rsi = result["daily_rsi"]
-
-    weekly_rsi = result["weekly_rsi"]
-
-    buy_conditions = result[
-        "buy_conditions"
+    ticker = result[
+        "ticker"
     ]
 
-    if buy_conditions:
+    price = result[
+        "price"
+    ]
 
-        condition_text = "\n".join(
-            f"• {condition}"
-            for condition
-            in buy_conditions
-        )
+    change = result[
+        "change"
+    ]
 
-    else:
+    daily_rsi = result[
+        "daily_rsi"
+    ]
 
-        condition_text = (
-            "• 특이사항 없음"
-        )
+    weekly_rsi = result[
+        "weekly_rsi"
+    ]
 
     return f"""
 ⚪ {ticker}
@@ -1505,150 +1606,48 @@ ${price:.2f}
 📊 주봉 RSI(14)
 {format_rsi(weekly_rsi)}
 
-🔔 매수조건
-{condition_text}
-
 """
 
 
 # ============================================================
-# Telegram 리포트
+# 기술주 리포트
 # ============================================================
 
-def make_report(
-    results,
-    market_close,
+def format_tech_result(
+    result,
 ):
 
-    if not results:
-
-        return None
-
-    first_date = results[0][
-        "date"
+    ticker = result[
+        "ticker"
     ]
 
-    # --------------------------------------------------------
-    # 마감시간 표시
-    # --------------------------------------------------------
-
-    if market_close is None:
-
-        close_label = (
-            "수동 테스트 "
-            "(최근 거래일 기준)"
-        )
-
-    else:
-
-        close_text = (
-            market_close.strftime(
-                "%H:%M"
-            )
-        )
-
-        if (
-            market_close.hour == 16
-            and
-            market_close.minute == 0
-        ):
-
-            close_label = (
-                f"{close_text} NY"
-            )
-
-        else:
-
-            close_label = (
-                f"{close_text} NY "
-                "(조기 폐장)"
-            )
-
-    test_banner = ""
-
-    if TEST_MODE:
-
-        test_banner = (
-            "\n🧪 수동 테스트 실행\n"
-        )
-
-    report = f"""📊 미국장 일일 리포트
-━━━━━━━━━━━━━━━━━━
-{test_banner}
-📅 거래일
-{first_date}
-
-🕐 NYSE 마감
-{close_label}
-
-📌 기본 분석
-QQQ / SPY
-
-📌 기술주
-MSFT / AMZN / GOOG / AAPL
-META / NVDA / TSLA / PLTR
-
-━━━━━━━━━━━━━━━━━━
-"""
-
-    # ========================================================
-    # QQQ / SPY
-    # ========================================================
-
-    for result in results:
-
-        ticker = result[
-            "ticker"
-        ]
-
-        if ticker not in ALWAYS_SHOW:
-            continue
-
-        report += format_result(
-            result
-        )
-
-    # ========================================================
-    # 기술주
-    #
-    # 매수조건 발생한 종목만 표시
-    # ========================================================
-
-    tech_results = [
-        result
-        for result in results
-        if result["ticker"]
-        in TECH_STOCKS
+    price = result[
+        "price"
     ]
 
-    if tech_results:
+    change = result[
+        "change"
+    ]
 
-        report += (
-            "━━━━━━━━━━━━━━━━━━\n"
-            "🚀 기술주 매수조건 발생\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-        )
+    daily_rsi = result[
+        "daily_rsi"
+    ]
 
-                for result in tech_results:
+    weekly_rsi = result[
+        "weekly_rsi"
+    ]
 
-            ticker = result["ticker"]
+    buy_conditions = result[
+        "buy_conditions"
+    ]
 
-            price = result["price"]
+    condition_text = "\n".join(
+        f"• {condition}"
+        for condition
+        in buy_conditions
+    )
 
-            change = result["change"]
-
-            daily_rsi = result["daily_rsi"]
-
-            weekly_rsi = result["weekly_rsi"]
-
-            buy_conditions = result["buy_conditions"]
-
-            condition_text = "\n".join(
-                f"• {condition}"
-                for condition in buy_conditions
-            )
-
-            report += f"""
+    return f"""
 🟢 {ticker}
 ━━━━━━━━━━━━━━━━━━
 
@@ -1669,7 +1668,160 @@ ${price:.2f}
 
 """
 
-    report += "\n━━━━━━━━━━━━━━━━━━"
+
+# ============================================================
+# 전체 Telegram 리포트
+# ============================================================
+
+def make_report(
+    results,
+    market_close,
+):
+
+    if not results:
+
+        return None
+
+    first_date = results[0][
+        "date"
+    ]
+
+    # --------------------------------------------------------
+    # 마감시간
+    # --------------------------------------------------------
+
+    if market_close is None:
+
+        close_label = (
+            "수동 테스트 "
+            "(최근 거래일 기준)"
+        )
+
+    else:
+
+        close_label = (
+            market_close.strftime(
+                "%H:%M NY"
+            )
+        )
+
+        # 조기폐장 여부
+        if (
+            market_close.hour != 16
+            or
+            market_close.minute != 0
+        ):
+
+            close_label += (
+                " (조기 폐장)"
+            )
+
+    # --------------------------------------------------------
+    # 테스트 표시
+    # --------------------------------------------------------
+
+    test_banner = ""
+
+    if TEST_MODE:
+
+        test_banner = (
+            "🧪 TEST MODE\n\n"
+        )
+
+    # --------------------------------------------------------
+    # 헤더
+    # --------------------------------------------------------
+
+    report = f"""📊 미국장 일일 리포트
+━━━━━━━━━━━━━━━━━━
+
+{test_banner}📅 거래일
+{first_date}
+
+🕐 NYSE 마감
+{close_label}
+
+📌 기본 분석
+QQQ / SPY
+
+📌 기술주
+MSFT / AMZN / GOOG / AAPL
+META / NVDA / TSLA / PLTR
+
+━━━━━━━━━━━━━━━━━━
+"""
+
+    # ========================================================
+    # QQQ / SPY
+    # 항상 표시
+    # ========================================================
+
+    for result in results:
+
+        ticker = result[
+            "ticker"
+        ]
+
+        if ticker not in ALWAYS_SHOW:
+            continue
+
+        report += format_basic_result(
+            result
+        )
+
+    # ========================================================
+    # 기술주
+    #
+    # 매수조건 발생한 종목만 표시
+    # ========================================================
+
+    tech_results = []
+
+    for result in results:
+
+        ticker = result[
+            "ticker"
+        ]
+
+        if ticker not in TECH_STOCKS:
+            continue
+
+        if not result[
+            "buy_condition"
+        ]:
+            continue
+
+        tech_results.append(
+            result
+        )
+
+    # ========================================================
+    # 기술주 매수조건 발생
+    # ========================================================
+
+    if tech_results:
+
+        report += (
+            "\n━━━━━━━━━━━━━━━━━━\n"
+            "🚀 기술주 매수조건 발생\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+        )
+
+        for result in tech_results:
+
+            report += format_tech_result(
+                result
+            )
+
+    # ========================================================
+    # 마지막 줄
+    #
+    # '자동 분석 완료' 없음
+    # ========================================================
+
+    report += (
+        "\n━━━━━━━━━━━━━━━━━━"
+    )
 
     return report
 
@@ -1679,6 +1831,18 @@ ${price:.2f}
 # ============================================================
 
 def main():
+
+    print(
+        "========================================"
+    )
+
+    print(
+        "QQQ / SPY / 기술주 일일 분석 시작"
+    )
+
+    print(
+        "========================================"
+    )
 
     # --------------------------------------------------------
     # 미국장 상태
@@ -1692,20 +1856,28 @@ def main():
 
     if not should_run:
 
+        print(
+            "오늘은 실행하지 않습니다."
+        )
+
         return
 
     today_ny = now_ny.date()
 
     print(
-        "\n분석 날짜:",
+        "분석 기준일:",
         today_ny,
     )
 
     # --------------------------------------------------------
-    # 종목 분석
+    # 결과
     # --------------------------------------------------------
 
     results = []
+
+    # --------------------------------------------------------
+    # 종목 분석
+    # --------------------------------------------------------
 
     for ticker in TICKERS:
 
@@ -1717,12 +1889,13 @@ def main():
             )
 
             if result is None:
+
                 continue
 
-            # ------------------------------------------------
+            # =================================================
             # QQQ / SPY
-            # 항상 표시
-            # ------------------------------------------------
+            # 항상 추가
+            # =================================================
 
             if ticker in ALWAYS_SHOW:
 
@@ -1732,15 +1905,15 @@ def main():
 
                 print(
                     f"{ticker}: "
-                    "기본 종목 → 항상 표시"
+                    "항상 표시"
                 )
 
                 continue
 
-            # ------------------------------------------------
+            # =================================================
             # 기술주
-            # 매수조건 있을 때만 표시
-            # ------------------------------------------------
+            # 매수조건 있을 때만 추가
+            # =================================================
 
             if ticker in TECH_STOCKS:
 
@@ -1767,12 +1940,15 @@ def main():
         except Exception as e:
 
             print(
-                f"{ticker} 분석 실패:",
-                repr(e),
+                f"{ticker} 분석 실패"
+            )
+
+            print(
+                repr(e)
             )
 
     # --------------------------------------------------------
-    # 전송할 결과 없음
+    # 결과 없음
     # --------------------------------------------------------
 
     if not results:
@@ -1784,7 +1960,7 @@ def main():
         return
 
     # --------------------------------------------------------
-    # 리포트
+    # Telegram 메시지 생성
     # --------------------------------------------------------
 
     report = make_report(
@@ -1792,35 +1968,41 @@ def main():
         market_close,
     )
 
+    if not report:
+
+        print(
+            "리포트 생성 실패"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # 콘솔 출력
+    # --------------------------------------------------------
+
     print(
         "\n========================================"
     )
 
-    print(report)
+    print(
+        report
+    )
 
     print(
         "========================================"
     )
 
     # --------------------------------------------------------
-    # Telegram
+    # Telegram 전송
     # --------------------------------------------------------
 
     send_telegram(
         report
     )
 
-    if TEST_MODE:
-
-        print(
-            "🧪 TEST MODE Telegram 전송 완료"
-        )
-
-    else:
-
-        print(
-            "Telegram 전송 완료"
-        )
+    print(
+        "Telegram 전송 완료"
+    )
 
 
 # ============================================================
