@@ -25,34 +25,14 @@ NY_TZ = ZoneInfo("America/New_York")
 
 
 # ============================================================
-# Yahoo Finance 데이터 재시도 설정
+# Yahoo 데이터 재시도 설정
 # ============================================================
 
-# GitHub Actions가 실행된 직후 Yahoo 데이터가 아직 갱신되지
-# 않았을 경우를 대비한 설정
+# 최대 30분
+YAHOO_MAX_WAIT_MINUTES = 30
 
-DATA_RETRY_COUNT = 6
-
-# 재시도 사이 대기시간
-# 60초 × 5회 = 최대 약 5분 추가 대기
-DATA_RETRY_INTERVAL = 60
-
-
-# ============================================================
-# 미국장 마감 후 실행 허용시간
-# ============================================================
-
-# 정상장:
-# 16:00 마감
-#
-# 조기폐장:
-# 13:00 마감 등
-#
-# GitHub Actions가 16:10 NY에 실행되는 경우
-# 조기폐장일에는 3시간 이상 지날 수 있으므로
-# 기존 120분보다 충분히 늘림
-
-MAX_POST_CLOSE_MINUTES = 360
+# 5분 간격
+YAHOO_RETRY_INTERVAL_MINUTES = 5
 
 
 # ============================================================
@@ -75,20 +55,14 @@ TICKERS = [
 ]
 
 
-# ============================================================
 # 항상 표시
-# ============================================================
-
 ALWAYS_SHOW = {
     "QQQ",
     "SPY",
 }
 
 
-# ============================================================
 # 매수조건 발생 시에만 표시
-# ============================================================
-
 TECH_STOCKS = {
     "MSFT",
     "AMZN",
@@ -269,12 +243,13 @@ def get_nyse_market_close(now_ny):
 
     # UTC timestamp를 뉴욕시간으로 변환
     if market_close.tzinfo is None:
+
         market_close = market_close.tz_localize(
             "UTC"
         )
 
     market_close = market_close.tz_convert(
-        NY_TZ
+        "America/New_York"
     )
 
     return market_close
@@ -355,43 +330,13 @@ def check_market_status():
     )
 
     # --------------------------------------------------------
-    # 조기폐장 여부
-    # --------------------------------------------------------
-
-    if (
-        market_close.hour != 16
-        or
-        market_close.minute != 0
-    ):
-
-        print(
-            "⚠️ 오늘은 조기폐장입니다."
-        )
-
-    else:
-
-        print(
-            "정상 거래일입니다."
-        )
-
-    # --------------------------------------------------------
     # 아직 장이 안 끝남
     # --------------------------------------------------------
 
     if now_ny < market_close:
 
-        remaining = (
-            market_close -
-            now_ny
-        )
-
         print(
             "아직 미국장이 마감되지 않았습니다."
-        )
-
-        print(
-            "남은 시간:",
-            remaining,
         )
 
         return (
@@ -401,7 +346,13 @@ def check_market_status():
         )
 
     # --------------------------------------------------------
-    # 마감 후 경과시간
+    # 마감 후 120분 이내만 실행
+    #
+    # 정상장 16:00
+    # → 18:00까지
+    #
+    # 조기폐장 13:00
+    # → 15:00까지
     # --------------------------------------------------------
 
     elapsed = (
@@ -409,28 +360,12 @@ def check_market_status():
         market_close
     )
 
-    elapsed_minutes = (
-        elapsed.total_seconds()
-        / 60
-    )
-
-    print(
-        f"미국장 마감 후 "
-        f"{elapsed_minutes:.1f}분 경과"
-    )
-
-    # --------------------------------------------------------
-    # 너무 늦게 실행된 경우
-    # --------------------------------------------------------
-
-    if (
-        elapsed_minutes >
-        MAX_POST_CLOSE_MINUTES
+    if elapsed > timedelta(
+        minutes=120
     ):
 
         print(
-            "미국장 마감 후 "
-            f"{MAX_POST_CLOSE_MINUTES}분이 지났습니다."
+            "미국장 마감 후 120분이 지났습니다."
         )
 
         return (
@@ -438,10 +373,6 @@ def check_market_status():
             market_close,
             now_ny,
         )
-
-    print(
-        "미국장 마감 후 실행 조건 충족"
-    )
 
     return (
         True,
@@ -1318,9 +1249,7 @@ def run_strategy(
         short_reason_list
     )
 
-    # ========================================================
     # 최근 120일
-    # ========================================================
 
     if len(df) > SIGNAL_LOOKBACK:
 
@@ -1357,167 +1286,49 @@ def run_strategy(
 
 
 # ============================================================
-# Yahoo Finance 일봉 데이터
-#
-# 핵심:
-# Yahoo 데이터가 아직 오늘 날짜로 갱신되지 않았으면
-# 자동으로 여러 번 재시도
+# 일봉 데이터
 # ============================================================
 
-def get_daily_data(
-    ticker,
-    expected_date=None,
-):
+def get_daily_data(ticker):
 
-    last_error = None
+    df = yf.download(
+        ticker,
+        period="1y",
+        interval="1d",
+        auto_adjust=True,
+        progress=False,
+        multi_level_index=False,
+    )
 
-    for attempt in range(
-        1,
-        DATA_RETRY_COUNT + 1,
-    ):
-
-        try:
-
-            print(
-                f"{ticker}: "
-                f"일봉 데이터 요청 "
-                f"({attempt}/{DATA_RETRY_COUNT})"
-            )
-
-            df = yf.download(
-                ticker,
-                period="1y",
-                interval="1d",
-                auto_adjust=True,
-                progress=False,
-                multi_level_index=False,
-            )
-
-            if df.empty:
-
-                raise Exception(
-                    f"{ticker} 데이터가 비어 있습니다."
-                )
-
-            df.columns = [
-                str(column).lower()
-                for column in df.columns
-            ]
-
-            required = [
-                "open",
-                "high",
-                "low",
-                "close",
-            ]
-
-            for column in required:
-
-                if column not in df.columns:
-
-                    raise Exception(
-                        f"{ticker} 데이터에 "
-                        f"{column} 컬럼이 없습니다."
-                    )
-
-            # ------------------------------------------------
-            # 예상 거래일이 지정된 경우
-            # Yahoo 최신 데이터 날짜 확인
-            # ------------------------------------------------
-
-            if expected_date is not None:
-
-                last_timestamp = df.index[-1]
-
-                if hasattr(
-                    last_timestamp,
-                    "date",
-                ):
-
-                    last_date = (
-                        last_timestamp.date()
-                    )
-
-                else:
-
-                    last_date = last_timestamp
-
-                print(
-                    f"{ticker}: "
-                    f"Yahoo 최근 거래일 = "
-                    f"{last_date}"
-                )
-
-                # 오늘 데이터가 들어왔으면 성공
-                if last_date == expected_date:
-
-                    print(
-                        f"{ticker}: "
-                        "오늘 데이터 확인 완료"
-                    )
-
-                    return df
-
-                # 아직 전날 데이터라면 재시도
-                print(
-                    f"{ticker}: "
-                    f"오늘 데이터({expected_date}) "
-                    f"미반영"
-                )
-
-            else:
-
-                return df
-
-        except Exception as e:
-
-            last_error = e
-
-            print(
-                f"{ticker}: "
-                f"Yahoo 데이터 요청 오류"
-            )
-
-            print(
-                repr(e)
-            )
-
-        # ----------------------------------------------------
-        # 마지막 시도라면 대기하지 않음
-        # ----------------------------------------------------
-
-        if attempt >= DATA_RETRY_COUNT:
-
-            break
-
-        print(
-            f"{ticker}: "
-            f"{DATA_RETRY_INTERVAL}초 후 "
-            "다시 시도합니다."
-        )
-
-        time.sleep(
-            DATA_RETRY_INTERVAL
-        )
-
-    # ========================================================
-    # 모든 재시도 실패
-    # ========================================================
-
-    if last_error:
+    if df.empty:
 
         raise Exception(
-            f"{ticker}: "
-            "Yahoo Finance 데이터를 "
-            f"{DATA_RETRY_COUNT}회 요청했지만 "
-            "최신 데이터를 확인하지 못했습니다."
-        ) from last_error
+            f"{ticker} 데이터를 "
+            f"가져오지 못했습니다."
+        )
 
-    raise Exception(
-        f"{ticker}: "
-        "Yahoo Finance 최신 데이터를 "
-        "가져오지 못했습니다."
-    )
+    df.columns = [
+        str(column).lower()
+        for column in df.columns
+    ]
+
+    required = [
+        "open",
+        "high",
+        "low",
+        "close",
+    ]
+
+    for column in required:
+
+        if column not in df.columns:
+
+            raise Exception(
+                f"{ticker} 데이터에 "
+                f"{column} 컬럼이 없습니다."
+            )
+
+    return df
 
 
 # ============================================================
@@ -1539,7 +1350,7 @@ def get_weekly_rsi(ticker):
 
         raise Exception(
             f"{ticker} 주봉 데이터를 "
-            "가져오지 못했습니다."
+            f"가져오지 못했습니다."
         )
 
     df.columns = [
@@ -1559,17 +1370,27 @@ def get_weekly_rsi(ticker):
         .iloc[-1]
     )
 
-    if pd.isna(
-        weekly_rsi
-    ):
-
-        raise Exception(
-            f"{ticker} 주봉 RSI 계산 실패"
-        )
-
     return float(
         weekly_rsi
     )
+
+
+# ============================================================
+# 데이터 날짜 확인
+# ============================================================
+
+def get_last_data_date(df):
+
+    last_timestamp = df.index[-1]
+
+    if hasattr(
+        last_timestamp,
+        "date",
+    ):
+
+        return last_timestamp.date()
+
+    return last_timestamp
 
 
 # ============================================================
@@ -1593,48 +1414,22 @@ def analyze_ticker(
         "========================================"
     )
 
-    # --------------------------------------------------------
-    # 일봉 데이터
-    #
-    # 오늘 데이터가 아직 Yahoo에 없다면
-    # get_daily_data()가 자동 재시도
-    # --------------------------------------------------------
-
     df = get_daily_data(
-        ticker,
-        expected_date=(
-            None
-            if TEST_MODE
-            else today_ny
-        ),
+        ticker
     )
 
-    last_timestamp = df.index[-1]
-
-    if hasattr(
-        last_timestamp,
-        "date",
-    ):
-
-        last_date = (
-            last_timestamp.date()
-        )
-
-    else:
-
-        last_date = last_timestamp
+    last_date = get_last_data_date(
+        df
+    )
 
     print(
-        f"{ticker} 최근 거래일:",
+        f"{ticker} 최근 Yahoo 거래일:",
         last_date,
     )
 
     # --------------------------------------------------------
     # 자동 실행
     # 오늘 데이터가 아니면 제외
-    #
-    # get_daily_data()에서 이미 재시도했지만
-    # 혹시 모를 최종 안전장치
     # --------------------------------------------------------
 
     if (
@@ -1645,7 +1440,7 @@ def analyze_ticker(
 
         print(
             f"{ticker}: "
-            "오늘 거래일 데이터 없음"
+            "Yahoo에 오늘 데이터가 아직 없습니다."
         )
 
         return None
@@ -1662,7 +1457,7 @@ def analyze_ticker(
 
         print(
             f"{ticker}: "
-            "TEST MODE → "
+            f"TEST MODE → "
             f"최근 거래일 {last_date} 사용"
         )
 
@@ -1767,8 +1562,7 @@ def analyze_ticker(
     if buy_condition:
 
         print(
-            f"{ticker}: "
-            "매수조건 발생"
+            f"{ticker}: 매수조건 발생"
         )
 
     else:
@@ -2054,53 +1848,16 @@ META / NVDA / TSLA / PLTR
 
 
 # ============================================================
-# MAIN
+# 전체 분석
 # ============================================================
 
-def main():
-
-    print(
-        "========================================"
-    )
-
-    print(
-        "QQQ / SPY / 기술주 일일 분석 시작"
-    )
-
-    print(
-        "========================================"
-    )
-
-    # --------------------------------------------------------
-    # 미국장 상태
-    # --------------------------------------------------------
-
-    (
-        should_run,
-        market_close,
-        now_ny,
-    ) = check_market_status()
-
-    if not should_run:
-
-        print(
-            "오늘은 실행하지 않습니다."
-        )
-
-        return
-
-    today_ny = now_ny.date()
-
-    print(
-        "분석 기준일:",
-        today_ny,
-    )
-
-    # --------------------------------------------------------
-    # 결과
-    # --------------------------------------------------------
+def run_analysis(
+    today_ny,
+):
 
     results = []
+
+    missing_data = []
 
     # --------------------------------------------------------
     # 종목 분석
@@ -2115,7 +1872,12 @@ def main():
                 today_ny,
             )
 
+            # Yahoo에 아직 오늘 데이터가 없는 경우
             if result is None:
+
+                missing_data.append(
+                    ticker
+                )
 
                 continue
 
@@ -2174,9 +1936,195 @@ def main():
                 repr(e)
             )
 
+    return (
+        results,
+        missing_data,
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print(
+        "========================================"
+    )
+
+    print(
+        "QQQ / SPY / 기술주 일일 분석 시작"
+    )
+
+    print(
+        "========================================"
+    )
+
     # --------------------------------------------------------
+    # 미국장 상태
+    # --------------------------------------------------------
+
+    (
+        should_run,
+        market_close,
+        now_ny,
+    ) = check_market_status()
+
+    if not should_run:
+
+        print(
+            "오늘은 실행하지 않습니다."
+        )
+
+        return
+
+    today_ny = now_ny.date()
+
+    print(
+        "분석 기준일:",
+        today_ny,
+    )
+
+    # ========================================================
+    # Yahoo 데이터 재시도
+    #
+    # 최대 30분
+    # 5분 간격
+    #
+    # 예:
+    #
+    # 16:30 → Yahoo 확인
+    # 16:35 → 재확인
+    # 16:40 → 재확인
+    # 16:45 → 재확인
+    # 16:50 → 재확인
+    # 16:55 → 재확인
+    #
+    # 최대 약 30분 대기
+    # ========================================================
+
+    if TEST_MODE:
+
+        print(
+            "🧪 TEST MODE → "
+            "Yahoo 재시도를 사용하지 않습니다."
+        )
+
+        results, missing_data = run_analysis(
+            today_ny
+        )
+
+    else:
+
+        max_attempts = (
+            YAHOO_MAX_WAIT_MINUTES
+            //
+            YAHOO_RETRY_INTERVAL_MINUTES
+        ) + 1
+
+        results = []
+        missing_data = []
+
+        for attempt in range(
+            max_attempts
+        ):
+
+            print(
+                "\n========================================"
+            )
+
+            print(
+                f"Yahoo 데이터 확인 "
+                f"{attempt + 1}/{max_attempts}"
+            )
+
+            print(
+                "========================================"
+            )
+
+            results, missing_data = (
+                run_analysis(
+                    today_ny
+                )
+            )
+
+            # ------------------------------------------------
+            # QQQ / SPY가 모두 최신이면 진행
+            #
+            # 기술주는 데이터가 늦어도
+            # 기본 리포트는 만들 수 있지만,
+            # 가능하면 전체 최신 데이터를 기다림
+            # ------------------------------------------------
+
+            required_missing = [
+                ticker
+                for ticker in missing_data
+                if ticker in ALWAYS_SHOW
+            ]
+
+            if not required_missing:
+
+                print(
+                    "QQQ / SPY Yahoo 데이터가 "
+                    "최신 거래일로 확인되었습니다."
+                )
+
+                break
+
+            # ------------------------------------------------
+            # 마지막 시도
+            # ------------------------------------------------
+
+            if attempt == max_attempts - 1:
+
+                print(
+                    "\nYahoo 데이터가 "
+                    f"{YAHOO_MAX_WAIT_MINUTES}분 동안 "
+                    "업데이트되지 않았습니다."
+                )
+
+                print(
+                    "누락 종목:",
+                    ", ".join(
+                        missing_data
+                    ),
+                )
+
+                print(
+                    "이번 실행은 Telegram 전송을 "
+                    "하지 않습니다."
+                )
+
+                return
+
+            # ------------------------------------------------
+            # 재시도
+            # ------------------------------------------------
+
+            print(
+                "Yahoo 데이터가 아직 최신이 아닙니다."
+            )
+
+            print(
+                "누락 종목:",
+                ", ".join(
+                    missing_data
+                ),
+            )
+
+            print(
+                f"{YAHOO_RETRY_INTERVAL_MINUTES}분 후 "
+                "다시 확인합니다."
+            )
+
+            time.sleep(
+                YAHOO_RETRY_INTERVAL_MINUTES
+                * 60
+            )
+
+    # ========================================================
     # 결과 없음
-    # --------------------------------------------------------
+    # ========================================================
 
     if not results:
 
@@ -2186,9 +2134,9 @@ def main():
 
         return
 
-    # --------------------------------------------------------
+    # ========================================================
     # Telegram 메시지 생성
-    # --------------------------------------------------------
+    # ========================================================
 
     report = make_report(
         results,
@@ -2203,9 +2151,9 @@ def main():
 
         return
 
-    # --------------------------------------------------------
+    # ========================================================
     # 콘솔 출력
-    # --------------------------------------------------------
+    # ========================================================
 
     print(
         "\n========================================"
@@ -2219,9 +2167,9 @@ def main():
         "========================================"
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Telegram 전송
-    # --------------------------------------------------------
+    # ========================================================
 
     send_telegram(
         report
@@ -2237,4 +2185,6 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
+
     main()
+```
