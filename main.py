@@ -1,356 +1,1758 @@
+```python
 import os
-import sys
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
-
-from strategy import run_strategy
+import pandas_market_calendars as mcal
 
 
 # ============================================================
 # 설정
 # ============================================================
 
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
+
+# ------------------------------------------------------------
+# 전체 분석 종목
+# ------------------------------------------------------------
+
 TICKERS = [
-    x.strip()
-    for x in os.getenv(
-        "TICKERS",
-        "QQQ"
-    ).split(",")
-    if x.strip()
+    "QQQ",
+    "SPY",
+
+    # Big Tech
+    "MSFT",
+    "AMZN",
+    "GOOG",
+    "AAPL",
+    "META",
+    "NVDA",
 ]
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# ------------------------------------------------------------
+# 항상 표시할 종목
+# ------------------------------------------------------------
+
+ALWAYS_SHOW = {
+    "QQQ",
+    "SPY",
+}
+
+# ------------------------------------------------------------
+# 빅테크
+# ------------------------------------------------------------
+
+BIG_TECH = {
+    "MSFT",
+    "AMZN",
+    "GOOG",
+    "AAPL",
+    "META",
+    "NVDA",
+}
+
+
+# ============================================================
+# 전략 설정
+# ============================================================
+
+RSI_LENGTH = 14
+
+OVERSOLD_LEVEL = 30.0
+OVERBOUGHT_LEVEL = 70.0
+
+PIVOT_LEFT = 3
+PIVOT_RIGHT = 3
+
+DIV_MIN_RANGE = 3
+DIV_MAX_RANGE = 80
+
+MIN_BARS = 5
+MAX_BARS = 40
+
+MIN_HL_PERCENT = 0.15
+
+SIGNAL_COOLDOWN = 25
+
+SIGNAL_LOOKBACK = 120
+
+NY_TZ = ZoneInfo(
+    "America/New_York"
+)
 
 
 # ============================================================
 # Telegram
 # ============================================================
 
-def send_telegram(message: str) -> bool:
+def send_telegram(message):
 
-    if not BOT_TOKEN or not CHAT_ID:
-
-        print(
-            "ERROR: BOT_TOKEN 또는 CHAT_ID가 없습니다."
+    if not BOT_TOKEN:
+        raise Exception(
+            "BOT_TOKEN이 설정되지 않았습니다."
         )
 
-        return False
+    if not CHAT_ID:
+        raise Exception(
+            "CHAT_ID가 설정되지 않았습니다."
+        )
 
     url = (
-        "https://api.telegram.org/bot"
-        f"{BOT_TOKEN}/sendMessage"
+        f"https://api.telegram.org/"
+        f"bot{BOT_TOKEN}/sendMessage"
     )
 
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-    }
+    response = requests.post(
+        url,
+        data={
+            "chat_id": CHAT_ID,
+            "text": message,
+        },
+        timeout=20,
+    )
 
-    try:
-
-        response = requests.post(
-            url,
-            data=payload,
-            timeout=20
-        )
-
-        response.raise_for_status()
-
-        print("Telegram 전송 완료")
-
-        return True
-
-    except Exception as e:
-
-        print(
-            f"Telegram 전송 실패: {e}"
-        )
-
-        return False
+    response.raise_for_status()
 
 
 # ============================================================
-# Yahoo Finance 일봉 데이터
+# NYSE 거래일정
 # ============================================================
 
-def get_data(ticker: str) -> pd.DataFrame:
+def get_nyse_market_close(now_ny):
+
+    nyse = mcal.get_calendar(
+        "NYSE"
+    )
+
+    today = now_ny.date()
+
+    schedule = nyse.schedule(
+        start_date=today,
+        end_date=today,
+        tz="America/New_York",
+    )
+
+    if schedule.empty:
+
+        return None
+
+    return schedule.iloc[0]["market_close"]
+
+
+# ============================================================
+# 미국장 상태 확인
+#
+# 휴장일 자동 처리
+# 조기폐장 자동 처리
+# 서머타임 / 겨울시간 자동 처리
+# ============================================================
+
+def check_market_status():
+
+    now_ny = datetime.now(
+        NY_TZ
+    )
+
+    market_close = (
+        get_nyse_market_close(
+            now_ny
+        )
+    )
 
     print(
-        f"[{ticker}] 최근 180일 일봉 다운로드"
+        "현재 뉴욕 시간:",
+        now_ny.strftime(
+            "%Y-%m-%d %H:%M:%S %Z"
+        )
     )
 
-    df = yf.download(
-        ticker,
-        period="180d",
-        interval="1d",
-        auto_adjust=False,
-        progress=False,
-        prepost=False,
+    # --------------------------------------------------------
+    # 휴장
+    # --------------------------------------------------------
+
+    if market_close is None:
+
+        print(
+            "오늘은 NYSE 휴장일입니다."
+        )
+
+        return (
+            False,
+            None,
+            now_ny,
+        )
+
+    print(
+        "NYSE 실제 마감:",
+        market_close.strftime(
+            "%Y-%m-%d %H:%M:%S %Z"
+        )
     )
 
-    if df.empty:
+    # --------------------------------------------------------
+    # 장 마감 전
+    # --------------------------------------------------------
 
-        raise RuntimeError(
-            f"{ticker}: Yahoo Finance 데이터가 없습니다."
+    if now_ny < market_close:
+
+        print(
+            "아직 미국장이 마감되지 않았습니다."
+        )
+
+        return (
+            False,
+            market_close,
+            now_ny,
         )
 
     # --------------------------------------------------------
-    # yfinance MultiIndex 대응
+    # 마감 후 경과시간
+    #
+    # 60분 이내의 실행만 허용
     # --------------------------------------------------------
 
-    if isinstance(
-        df.columns,
-        pd.MultiIndex
+    elapsed = (
+        now_ny -
+        market_close
+    )
+
+    if elapsed > timedelta(
+        minutes=60
     ):
 
-        df.columns = (
-            df.columns
-            .get_level_values(0)
+        print(
+            "NYSE 마감 후 60분이 지났습니다."
         )
 
-    # --------------------------------------------------------
-    # 컬럼 이름 변경
-    # --------------------------------------------------------
+        print(
+            "중복 실행 방지를 위해 종료합니다."
+        )
 
-    df = df.rename(
-        columns={
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Volume": "volume",
-        }
+        return (
+            False,
+            market_close,
+            now_ny,
+        )
+
+    return (
+        True,
+        market_close,
+        now_ny,
     )
 
-    required_columns = [
+
+# ============================================================
+# RSI
+# TradingView ta.rsi() Wilder 방식
+# ============================================================
+
+def calculate_rsi(
+    series: pd.Series,
+    length: int = 14,
+) -> pd.Series:
+
+    series = pd.to_numeric(
+        series,
+        errors="coerce",
+    )
+
+    delta = series.diff()
+
+    gain = delta.clip(
+        lower=0
+    )
+
+    loss = -delta.clip(
+        upper=0
+    )
+
+    avg_gain = gain.ewm(
+        alpha=1 / length,
+        adjust=False,
+        min_periods=length,
+    ).mean()
+
+    avg_loss = loss.ewm(
+        alpha=1 / length,
+        adjust=False,
+        min_periods=length,
+    ).mean()
+
+    rs = (
+        avg_gain /
+        avg_loss.replace(
+            0,
+            np.nan
+        )
+    )
+
+    rsi = (
+        100 -
+        (
+            100 /
+            (1 + rs)
+        )
+    )
+
+    rsi = rsi.mask(
+        avg_loss == 0,
+        100
+    )
+
+    rsi = rsi.mask(
+        avg_gain == 0,
+        0
+    )
+
+    return rsi
+
+
+# ============================================================
+# Pivot Low
+# ============================================================
+
+def is_pivot_low(
+    lows: pd.Series,
+    index: int,
+    left: int,
+    right: int,
+) -> bool:
+
+    pivot_index = (
+        index - right
+    )
+
+    if pivot_index - left < 0:
+        return False
+
+    if pivot_index + right >= len(
+        lows
+    ):
+        return False
+
+    pivot_value = float(
+        lows.iloc[
+            pivot_index
+        ]
+    )
+
+    left_values = lows.iloc[
+        pivot_index - left:
+        pivot_index
+    ]
+
+    right_values = lows.iloc[
+        pivot_index + 1:
+        pivot_index + right + 1
+    ]
+
+    if len(left_values) != left:
+        return False
+
+    if len(right_values) != right:
+        return False
+
+    return (
+        pivot_value <=
+        float(left_values.min())
+        and
+        pivot_value <=
+        float(right_values.min())
+    )
+
+
+# ============================================================
+# Pivot High
+# ============================================================
+
+def is_pivot_high(
+    highs: pd.Series,
+    index: int,
+    left: int,
+    right: int,
+) -> bool:
+
+    pivot_index = (
+        index - right
+    )
+
+    if pivot_index - left < 0:
+        return False
+
+    if pivot_index + right >= len(
+        highs
+    ):
+        return False
+
+    pivot_value = float(
+        highs.iloc[
+            pivot_index
+        ]
+    )
+
+    left_values = highs.iloc[
+        pivot_index - left:
+        pivot_index
+    ]
+
+    right_values = highs.iloc[
+        pivot_index + 1:
+        pivot_index + right + 1
+    ]
+
+    if len(left_values) != left:
+        return False
+
+    if len(right_values) != right:
+        return False
+
+    return (
+        pivot_value >=
+        float(left_values.max())
+        and
+        pivot_value >=
+        float(right_values.max())
+    )
+
+
+# ============================================================
+# barssince
+# ============================================================
+
+def bars_since(
+    condition: pd.Series
+) -> pd.Series:
+
+    condition = pd.Series(
+        condition,
+        index=condition.index
+        if hasattr(
+            condition,
+            "index"
+        )
+        else None,
+    )
+
+    result = []
+
+    count = np.nan
+
+    for value in condition:
+
+        if bool(value):
+
+            count = 0
+
+        elif not pd.isna(
+            count
+        ):
+
+            count += 1
+
+        result.append(
+            count
+        )
+
+    return pd.Series(
+        result,
+        index=condition.index
+    )
+
+
+# ============================================================
+# 전략
+# ============================================================
+
+def run_strategy(
+    df: pd.DataFrame
+):
+
+    df = df.copy()
+
+    required = [
         "open",
         "high",
         "low",
         "close",
     ]
 
-    for column in required_columns:
+    for column in required:
 
         if column not in df.columns:
 
-            raise RuntimeError(
-                f"{ticker}: {column} 데이터가 없습니다."
+            raise ValueError(
+                f"필수 컬럼 없음: {column}"
             )
 
-    df = df[
-        required_columns
-    ].dropna()
+    for column in required:
+
+        df[column] = pd.to_numeric(
+            df[column],
+            errors="coerce"
+        )
+
+    df = df.dropna(
+        subset=required
+    ).reset_index(
+        drop=True
+    )
 
     if len(df) < 100:
 
-        raise RuntimeError(
-            f"{ticker}: 일봉 데이터가 너무 적습니다. "
-            f"현재 {len(df)}개"
+        raise ValueError(
+            f"데이터가 너무 적습니다: "
+            f"{len(df)}개"
         )
 
-    # --------------------------------------------------------
-    # 날짜
-    # --------------------------------------------------------
+    # ========================================================
+    # RSI
+    # ========================================================
 
-    df["date"] = [
-        str(index.date())
-        if hasattr(index, "date")
-        else str(index)
-        for index in df.index
+    df["rsi"] = calculate_rsi(
+        df["close"],
+        RSI_LENGTH
+    )
+
+    df["is_oversold"] = (
+        df["rsi"] <=
+        OVERSOLD_LEVEL
+    )
+
+    df["is_overbought"] = (
+        df["rsi"] >=
+        OVERBOUGHT_LEVEL
+    )
+
+    # ========================================================
+    # Pivot
+    # ========================================================
+
+    pivot_low_flags = []
+    pivot_high_flags = []
+
+    for i in range(
+        len(df)
+    ):
+
+        pivot_low_flags.append(
+            is_pivot_low(
+                df["low"],
+                i,
+                PIVOT_LEFT,
+                PIVOT_RIGHT,
+            )
+        )
+
+        pivot_high_flags.append(
+            is_pivot_high(
+                df["high"],
+                i,
+                PIVOT_LEFT,
+                PIVOT_RIGHT,
+            )
+        )
+
+    df["pivot_low"] = pd.Series(
+        pivot_low_flags,
+        index=df.index,
+        dtype=bool,
+    )
+
+    df["pivot_high"] = pd.Series(
+        pivot_high_flags,
+        index=df.index,
+        dtype=bool,
+    )
+
+    # ========================================================
+    # Pivot RSI
+    # ========================================================
+
+    df["pivot_low_rsi"] = np.nan
+    df["pivot_high_rsi"] = np.nan
+
+    for i in range(
+        len(df)
+    ):
+
+        if bool(
+            df["pivot_low"].iloc[i]
+        ):
+
+            pivot_index = (
+                i -
+                PIVOT_RIGHT
+            )
+
+            if pivot_index >= 0:
+
+                df.loc[
+                    i,
+                    "pivot_low_rsi",
+                ] = df["rsi"].iloc[
+                    pivot_index
+                ]
+
+        if bool(
+            df["pivot_high"].iloc[i]
+        ):
+
+            pivot_index = (
+                i -
+                PIVOT_RIGHT
+            )
+
+            if pivot_index >= 0:
+
+                df.loc[
+                    i,
+                    "pivot_high_rsi",
+                ] = df["rsi"].iloc[
+                    pivot_index
+                ]
+
+    # ========================================================
+    # 상승 다이버전스
+    # ========================================================
+
+    df["bull_divergence"] = pd.Series(
+        False,
+        index=df.index,
+        dtype=bool,
+    )
+
+    previous_price_pivots = []
+    previous_rsi_pivots = []
+    previous_pivot_bars = []
+
+    for i in range(
+        len(df)
+    ):
+
+        if not bool(
+            df["pivot_low"].iloc[i]
+        ):
+
+            continue
+
+        current_pivot_bar = (
+            i -
+            PIVOT_RIGHT
+        )
+
+        current_price = float(
+            df["low"].iloc[
+                current_pivot_bar
+            ]
+        )
+
+        current_rsi = (
+            df["rsi"].iloc[
+                current_pivot_bar
+            ]
+        )
+
+        if pd.isna(
+            current_rsi
+        ):
+
+            continue
+
+        current_rsi = float(
+            current_rsi
+        )
+
+        bull_divergence = False
+
+        for (
+            prev_price,
+            prev_rsi,
+            prev_bar,
+        ) in zip(
+            previous_price_pivots,
+            previous_rsi_pivots,
+            previous_pivot_bars,
+        ):
+
+            bars_between = (
+                current_pivot_bar -
+                prev_bar
+            )
+
+            if (
+                bars_between >=
+                DIV_MIN_RANGE
+                and
+                bars_between <=
+                DIV_MAX_RANGE
+            ):
+
+                if (
+                    current_price <
+                    prev_price
+                    and
+                    current_rsi >
+                    prev_rsi
+                ):
+
+                    bull_divergence = True
+                    break
+
+        if bull_divergence:
+
+            df.loc[
+                i,
+                "bull_divergence",
+            ] = True
+
+        previous_price_pivots.insert(
+            0,
+            current_price
+        )
+
+        previous_rsi_pivots.insert(
+            0,
+            current_rsi
+        )
+
+        previous_pivot_bars.insert(
+            0,
+            current_pivot_bar
+        )
+
+        if len(
+            previous_price_pivots
+        ) > 20:
+
+            previous_price_pivots.pop()
+            previous_rsi_pivots.pop()
+            previous_pivot_bars.pop()
+
+    # ========================================================
+    # 원형파
+    # ========================================================
+
+    short_window = max(
+        4,
+        int(
+            MAX_BARS * 0.45
+        )
+    )
+
+    df["lowest_40"] = (
+        df["low"]
+        .rolling(
+            window=MAX_BARS,
+            min_periods=MAX_BARS,
+        )
+        .min()
+    )
+
+    df["lowest_short"] = (
+        df["low"]
+        .rolling(
+            window=short_window,
+            min_periods=short_window,
+        )
+        .min()
+    )
+
+    df["highest_40"] = (
+        df["high"]
+        .rolling(
+            window=MAX_BARS,
+            min_periods=MAX_BARS,
+        )
+        .max()
+    )
+
+    df["highest_short"] = (
+        df["high"]
+        .rolling(
+            window=short_window,
+            min_periods=short_window,
+        )
+        .max()
+    )
+
+    # ========================================================
+    # 최저점 / 최고점
+    # ========================================================
+
+    low_equals_lowest = pd.Series(
+        False,
+        index=df.index,
+        dtype=bool,
+    )
+
+    valid_low = (
+        df["low"].notna()
+        &
+        df["lowest_40"].notna()
+    )
+
+    low_equals_lowest.loc[
+        valid_low
+    ] = (
+        np.abs(
+            df.loc[
+                valid_low,
+                "low",
+            ]
+            -
+            df.loc[
+                valid_low,
+                "lowest_40",
+            ]
+        )
+        <= 1e-10
+    )
+
+    high_equals_highest = pd.Series(
+        False,
+        index=df.index,
+        dtype=bool,
+    )
+
+    valid_high = (
+        df["high"].notna()
+        &
+        df["highest_40"].notna()
+    )
+
+    high_equals_highest.loc[
+        valid_high
+    ] = (
+        np.abs(
+            df.loc[
+                valid_high,
+                "high",
+            ]
+            -
+            df.loc[
+                valid_high,
+                "highest_40",
+            ]
+        )
+        <= 1e-10
+    )
+
+    df["bars_since_low"] = bars_since(
+        low_equals_lowest
+    )
+
+    df["bars_since_high"] = bars_since(
+        high_equals_highest
+    )
+
+    # ========================================================
+    # 단계 변수
+    # ========================================================
+
+    stage1_long = False
+    stage2_long = False
+    stage1_short = False
+
+    last_long_bar = None
+    last_short_bar = None
+
+    stage1_long_list = []
+    stage2_long_list = []
+    stage1_short_list = []
+
+    higher_low_list = []
+    lower_high_list = []
+
+    long_signal_list = []
+    short_signal_list = []
+
+    long_reason_list = []
+    short_reason_list = []
+
+    # ========================================================
+    # 각 일봉
+    # ========================================================
+
+    for i in range(
+        len(df)
+    ):
+
+        is_oversold = bool(
+            df["is_oversold"].iloc[i]
+        )
+
+        is_overbought = bool(
+            df["is_overbought"].iloc[i]
+        )
+
+        bull_div_now = bool(
+            df["bull_divergence"].iloc[i]
+        )
+
+        # ====================================================
+        # LONG 1단계
+        # ====================================================
+
+        if is_oversold:
+
+            if not stage1_long:
+
+                stage1_long = True
+                stage2_long = False
+
+        if is_oversold:
+
+            stage1_short = False
+
+        # ====================================================
+        # 상승 다이버전스
+        # ====================================================
+
+        if (
+            stage1_long
+            and
+            bull_div_now
+            and
+            not stage2_long
+        ):
+
+            stage2_long = True
+
+        # ====================================================
+        # Higher Low
+        # ====================================================
+
+        low1 = (
+            df["lowest_40"].iloc[i]
+        )
+
+        low2 = (
+            df["lowest_short"].iloc[i]
+        )
+
+        bars_since_low = (
+            df["bars_since_low"].iloc[i]
+        )
+
+        higher_low = False
+
+        if (
+            not pd.isna(low1)
+            and
+            not pd.isna(low2)
+        ):
+
+            higher_low = (
+                float(low2)
+                >
+                float(low1)
+                *
+                (
+                    1 +
+                    MIN_HL_PERCENT / 100
+                )
+            )
+
+        bars_ok_long = False
+
+        if not pd.isna(
+            bars_since_low
+        ):
+
+            bars_ok_long = (
+                bars_since_low >=
+                MIN_BARS
+                and
+                bars_since_low <=
+                MAX_BARS
+            )
+
+        circular_long = (
+            higher_low
+            and
+            bars_ok_long
+        )
+
+        # ====================================================
+        # LONG cooldown
+        # ====================================================
+
+        cooldown_long = (
+            last_long_bar is None
+            or
+            (
+                i -
+                last_long_bar
+                >=
+                SIGNAL_COOLDOWN
+            )
+        )
+
+        # ====================================================
+        # LONG
+        # ====================================================
+
+        long_signal = (
+            stage1_long
+            and
+            circular_long
+            and
+            cooldown_long
+        )
+
+        long_reason = ""
+
+        if long_signal:
+
+            if stage2_long:
+
+                long_reason = (
+                    "과매도 → "
+                    "상승 다이버전스 → "
+                    "Higher Low"
+                )
+
+            else:
+
+                long_reason = (
+                    "과매도 → "
+                    "Higher Low"
+                )
+
+            last_long_bar = i
+
+            stage2_long = False
+
+        # 과매도 종료
+        if not is_oversold:
+
+            stage1_long = False
+            stage2_long = False
+
+        # ====================================================
+        # SHORT
+        #
+        # 계산은 유지하지만
+        # 매수 리포트에는 사용하지 않음
+        # ====================================================
+
+        if is_overbought:
+
+            if not stage1_short:
+
+                stage1_short = True
+
+        if is_overbought:
+
+            stage1_long = False
+            stage2_long = False
+
+        high1 = (
+            df["highest_40"].iloc[i]
+        )
+
+        high2 = (
+            df["highest_short"].iloc[i]
+        )
+
+        bars_since_high = (
+            df["bars_since_high"].iloc[i]
+        )
+
+        lower_high = False
+
+        if (
+            not pd.isna(high1)
+            and
+            not pd.isna(high2)
+        ):
+
+            lower_high = (
+                float(high2)
+                <
+                float(high1)
+                *
+                (
+                    1 -
+                    MIN_HL_PERCENT / 100
+                )
+            )
+
+        bars_ok_short = False
+
+        if not pd.isna(
+            bars_since_high
+        ):
+
+            bars_ok_short = (
+                bars_since_high >=
+                MIN_BARS
+                and
+                bars_since_high <=
+                MAX_BARS
+            )
+
+        circular_short = (
+            lower_high
+            and
+            bars_ok_short
+        )
+
+        cooldown_short = (
+            last_short_bar is None
+            or
+            (
+                i -
+                last_short_bar
+                >=
+                SIGNAL_COOLDOWN
+            )
+        )
+
+        short_signal = (
+            stage1_short
+            and
+            circular_short
+            and
+            cooldown_short
+        )
+
+        short_reason = ""
+
+        if short_signal:
+
+            short_reason = (
+                "과매수 → Lower High"
+            )
+
+            last_short_bar = i
+
+        # ====================================================
+        # 결과
+        # ====================================================
+
+        stage1_long_list.append(
+            stage1_long
+        )
+
+        stage2_long_list.append(
+            stage2_long
+        )
+
+        stage1_short_list.append(
+            stage1_short
+        )
+
+        higher_low_list.append(
+            higher_low
+        )
+
+        lower_high_list.append(
+            lower_high
+        )
+
+        long_signal_list.append(
+            long_signal
+        )
+
+        short_signal_list.append(
+            short_signal
+        )
+
+        long_reason_list.append(
+            long_reason
+        )
+
+        short_reason_list.append(
+            short_reason
+        )
+
+    # ========================================================
+    # 결과 저장
+    # ========================================================
+
+    df["stage1_long"] = pd.Series(
+        stage1_long_list,
+        index=df.index,
+        dtype=bool,
+    )
+
+    df["stage2_long"] = pd.Series(
+        stage2_long_list,
+        index=df.index,
+        dtype=bool,
+    )
+
+    df["stage1_short"] = pd.Series(
+        stage1_short_list,
+        index=df.index,
+        dtype=bool,
+    )
+
+    df["higher_low"] = pd.Series(
+        higher_low_list,
+        index=df.index,
+        dtype=bool,
+    )
+
+    df["lower_high"] = pd.Series(
+        lower_high_list,
+        index=df.index,
+        dtype=bool,
+    )
+
+    df["long_signal"] = pd.Series(
+        long_signal_list,
+        index=df.index,
+        dtype=bool,
+    )
+
+    df["short_signal"] = pd.Series(
+        short_signal_list,
+        index=df.index,
+        dtype=bool,
+    )
+
+    df["long_reason"] = (
+        long_reason_list
+    )
+
+    df["short_reason"] = (
+        short_reason_list
+    )
+
+    if len(df) > SIGNAL_LOOKBACK:
+
+        recent_df = df.iloc[
+            -SIGNAL_LOOKBACK:
+        ].copy()
+
+    else:
+
+        recent_df = df.copy()
+
+    last_row = df.iloc[-1]
+
+    return {
+        "df": df,
+        "recent_df": recent_df,
+
+        "long_signal": bool(
+            last_row[
+                "long_signal"
+            ]
+        ),
+
+        "short_signal": bool(
+            last_row[
+                "short_signal"
+            ]
+        ),
+
+        "long_reason": str(
+            last_row[
+                "long_reason"
+            ]
+        ),
+
+        "short_reason": str(
+            last_row[
+                "short_reason"
+            ]
+        ),
+    }
+
+
+# ============================================================
+# 일봉 데이터
+# ============================================================
+
+def get_daily_data(
+    ticker
+):
+
+    df = yf.download(
+        ticker,
+        period="1y",
+        interval="1d",
+        auto_adjust=True,
+        progress=False,
+        multi_level_index=False,
+    )
+
+    if df.empty:
+
+        raise Exception(
+            f"{ticker} 데이터를 "
+            f"가져오지 못했습니다."
+        )
+
+    df.columns = [
+        str(column).lower()
+        for column in df.columns
     ]
 
-    df = df.reset_index(drop=True)
+    required = [
+        "open",
+        "high",
+        "low",
+        "close",
+    ]
+
+    for column in required:
+
+        if column not in df.columns:
+
+            raise Exception(
+                f"{ticker} 데이터에 "
+                f"{column} 컬럼이 없습니다."
+            )
 
     return df
 
 
 # ============================================================
-# 가격 표시
+# 주봉 RSI
 # ============================================================
 
-def format_price(value) -> str:
+def get_weekly_rsi(
+    ticker
+):
 
-    return f"{float(value):,.2f}"
-
-
-# ============================================================
-# TRUE / FALSE 표시
-# ============================================================
-
-def check_mark(value) -> str:
-
-    return "✅" if bool(value) else "❌"
-
-
-# ============================================================
-# 일일 리포트
-# ============================================================
-
-def make_daily_report(
-    ticker: str,
-    row: pd.Series,
-    result: dict
-) -> str:
-
-    long_signal = bool(
-        result["long_signal"]
+    df = yf.download(
+        ticker,
+        period="5y",
+        interval="1wk",
+        auto_adjust=True,
+        progress=False,
+        multi_level_index=False,
     )
 
-    short_signal = bool(
-        result["short_signal"]
-    )
+    if df.empty:
 
-    # --------------------------------------------------------
-    # 최종 판정
-    # --------------------------------------------------------
-
-    if long_signal:
-
-        status = (
-            "🚨 LONG 진입 신호"
+        raise Exception(
+            f"{ticker} 주봉 데이터를 "
+            f"가져오지 못했습니다."
         )
 
-    elif short_signal:
+    df.columns = [
+        str(column).lower()
+        for column in df.columns
+    ]
 
-        status = (
-            "🚨 SHORT 진입 신호"
+    close = pd.Series(
+        df["close"]
+    ).astype(float)
+
+    weekly_rsi = (
+        calculate_rsi(
+            close,
+            RSI_LENGTH
+        )
+        .iloc[-1]
+    )
+
+    return float(
+        weekly_rsi
+    )
+
+
+# ============================================================
+# 종목 분석
+# ============================================================
+
+def analyze_ticker(
+    ticker,
+    today_ny
+):
+
+    print(
+        "\n========================================"
+    )
+
+    print(
+        f"{ticker} 분석 시작"
+    )
+
+    print(
+        "========================================"
+    )
+
+    df = get_daily_data(
+        ticker
+    )
+
+    last_timestamp = df.index[-1]
+
+    if hasattr(
+        last_timestamp,
+        "date"
+    ):
+
+        last_date = (
+            last_timestamp.date()
         )
 
     else:
 
-        status = (
-            "⏸ 진입 신호 없음"
+        last_date = last_timestamp
+
+    print(
+        f"{ticker} 최근 거래일:",
+        last_date
+    )
+
+    # --------------------------------------------------------
+    # 오늘 거래 데이터가 없으면 제외
+    # --------------------------------------------------------
+
+    if last_date != today_ny:
+
+        print(
+            f"{ticker}: "
+            "오늘 데이터 없음"
+        )
+
+        return None
+
+    # ========================================================
+    # 가격
+    # ========================================================
+
+    price = float(
+        df["close"].iloc[-1]
+    )
+
+    previous_close = float(
+        df["close"].iloc[-2]
+    )
+
+    change = (
+        (
+            price -
+            previous_close
+        )
+        /
+        previous_close
+        *
+        100
+    )
+
+    # ========================================================
+    # RSI
+    # ========================================================
+
+    daily_rsi = float(
+        calculate_rsi(
+            df["close"],
+            RSI_LENGTH
+        ).iloc[-1]
+    )
+
+    weekly_rsi = (
+        get_weekly_rsi(
+            ticker
+        )
+    )
+
+    # ========================================================
+    # 전략
+    # ========================================================
+
+    strategy = run_strategy(
+        df[
+            [
+                "open",
+                "high",
+                "low",
+                "close",
+            ]
+        ]
+    )
+
+    long_signal = strategy[
+        "long_signal"
+    ]
+
+    long_reason = strategy[
+        "long_reason"
+    ]
+
+    # ========================================================
+    # 매수조건
+    # ========================================================
+
+    buy_conditions = []
+
+    # --------------------------------------------------------
+    # 일봉 RSI
+    # --------------------------------------------------------
+
+    if daily_rsi <= 30:
+
+        buy_conditions.append(
+            "🔴 일봉 RSI ≤ 30"
         )
 
     # --------------------------------------------------------
-    # LONG 조건
+    # 주봉 RSI
     # --------------------------------------------------------
 
-    long_reason = (
-        result["long_reason"]
-        if result["long_reason"]
-        else "없음"
+    if weekly_rsi <= 30:
+
+        buy_conditions.append(
+            "🔴 주봉 RSI ≤ 30"
+        )
+
+    # --------------------------------------------------------
+    # LONG
+    # --------------------------------------------------------
+
+    if long_signal:
+
+        buy_conditions.append(
+            "🟢 LONG\n"
+            f"   └ {long_reason}"
+        )
+
+    buy_condition = (
+        len(buy_conditions) > 0
     )
 
-    # --------------------------------------------------------
-    # SHORT 조건
-    # --------------------------------------------------------
+    return {
+        "ticker": ticker,
 
-    short_reason = (
-        result["short_reason"]
-        if result["short_reason"]
-        else "없음"
-    )
+        "date": last_date,
 
-    # --------------------------------------------------------
-    # 메시지
-    # --------------------------------------------------------
+        "price": price,
 
-    message = (
-        "📊 QQQ 일봉 전략 리포트\n"
-        "\n"
-        f"종목: {ticker}\n"
-        f"기준일: {row['date']}\n"
-        f"현재가: ${format_price(row['close'])}\n"
-        f"RSI: {row['rsi']:.2f}\n"
-        "\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🟢 LONG 조건\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f" 과매도: "
-        f"{check_mark(row['stage1_long'])}\n"
-        f" 상승 다이버전스: "
-        f"{check_mark(row['bull_divergence'])}\n"
-        f" Higher Low: "
-        f"{check_mark(row['higher_low'])}\n"
-        f"▶ LONG: "
-        f"{'🚨 발생' if long_signal else '❌'}\n"
-        f"조건: {long_reason}\n"
-        "\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🔴 SHORT 조건\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f" 과매수: "
-        f"{check_mark(row['stage1_short'])}\n"
-        f" Lower High: "
-        f"{check_mark(row['lower_high'])}\n"
-        f"▶ SHORT: "
-        f"{'🚨 발생' if short_signal else '❌'}\n"
-        f"조건: {short_reason}\n"
-        "\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"📌 최종 판정: {status}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "\n"
-        "기준: 일봉\n"
-        "계산 데이터: 최근 180일\n"
-    )
+        "change": change,
 
-    return message
+        "daily_rsi": daily_rsi,
+
+        "weekly_rsi": weekly_rsi,
+
+        "long_signal": long_signal,
+
+        "long_reason": long_reason,
+
+        "buy_condition": buy_condition,
+
+        "buy_conditions": buy_conditions,
+    }
 
 
 # ============================================================
-# 콘솔 상태 출력
+# Telegram 리포트
 # ============================================================
 
-def print_status(
-    ticker: str,
-    row: pd.Series
+def make_report(
+    results,
+    market_close
 ):
 
-    print()
-    print("=" * 60)
-    print(f"[{ticker}]")
-    print("=" * 60)
-
-    print(
-        f"일봉: {row['date']}"
+    first_date = (
+        results[0]["date"]
     )
 
-    print(
-        f"가격: ${format_price(row['close'])}"
+    close_text = (
+        market_close.strftime(
+            "%H:%M"
+        )
     )
 
-    print(
-        f"RSI: {row['rsi']:.2f}"
+    # 정상장
+    if (
+        market_close.hour == 16
+        and
+        market_close.minute == 0
+    ):
+
+        close_label = (
+            f"{close_text} NY"
+        )
+
+    # 조기폐장
+    else:
+
+        close_label = (
+            f"{close_text} NY "
+            "(조기 폐장)"
+        )
+
+    report = f"""📊 미국장 일일 리포트
+━━━━━━━━━━━━━━━━━━
+
+📅 거래일
+{first_date}
+
+🕐 NYSE 마감
+{close_label}
+
+📌 기본 분석
+QQQ / SPY
+
+📌 빅테크
+MSFT / AMZN / GOOG
+AAPL / META / NVDA
+
+━━━━━━━━━━━━━━━━━━
+"""
+
+    # ========================================================
+    # 기본 종목
+    # ========================================================
+
+    for result in results:
+
+        ticker = result[
+            "ticker"
+        ]
+
+        if ticker not in ALWAYS_SHOW:
+            continue
+
+        price = result[
+            "price"
+        ]
+
+        change = result[
+            "change"
+        ]
+
+        daily_rsi = result[
+            "daily_rsi"
+        ]
+
+        weekly_rsi = result[
+            "weekly_rsi"
+        ]
+
+        buy_conditions = result[
+            "buy_conditions"
+        ]
+
+        if buy_conditions:
+
+            condition_text = (
+                "\n".join(
+                    f"• {condition}"
+                    for condition
+                    in buy_conditions
+                )
+            )
+
+        else:
+
+            condition_text = (
+                "• 특이사항 없음"
+            )
+
+        report += f"""
+⚪ {ticker}
+━━━━━━━━━━━━━━━━━━
+
+💰 종가
+${price:.2f}
+
+📈 등락률
+{change:+.2f}%
+
+📊 일봉 RSI(14)
+{daily_rsi:.2f}
+
+📊 주봉 RSI(14)
+{weekly_rsi:.2f}
+
+🔔 매수조건
+{condition_text}
+
+"""
+
+    # ========================================================
+    # 빅테크
+    # ========================================================
+
+    big_tech_results = [
+        result
+        for result in results
+        if result["ticker"] in BIG_TECH
+    ]
+
+    if big_tech_results:
+
+        report += (
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🚀 빅테크 매수조건 발생\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+        )
+
+    for result in big_tech_results:
+
+        ticker = result[
+            "ticker"
+        ]
+
+        price = result[
+            "price"
+        ]
+
+        change = result[
+            "change"
+        ]
+
+        daily_rsi = result[
+            "daily_rsi"
+        ]
+
+        weekly_rsi = result[
+            "weekly_rsi"
+        ]
+
+        buy_conditions = result[
+            "buy_conditions"
+        ]
+
+        condition_text = (
+            "\n".join(
+                f"• {condition}"
+                for condition
+                in buy_conditions
+            )
+        )
+
+        report += f"""
+🟢 {ticker}
+━━━━━━━━━━━━━━━━━━
+
+💰 종가
+${price:.2f}
+
+📈 등락률
+{change:+.2f}%
+
+📊 일봉 RSI(14)
+{daily_rsi:.2f}
+
+📊 주봉 RSI(14)
+{weekly_rsi:.2f}
+
+🔔 매수조건
+{condition_text}
+
+"""
+
+    report += (
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🤖 자동 분석 완료"
     )
 
-    print(
-        f"과매도: {row['stage1_long']}"
-    )
-
-    print(
-        f"상승 다이버전스: "
-        f"{row['bull_divergence']}"
-    )
-
-    print(
-        f"Higher Low: "
-        f"{row['higher_low']}"
-    )
-
-    print(
-        f"과매수: "
-        f"{row['stage1_short']}"
-    )
-
-    print(
-        f"Lower High: "
-        f"{row['lower_high']}"
-    )
-
-    print(
-        f"LONG: "
-        f"{row['long_signal']}"
-    )
-
-    print(
-        f"SHORT: "
-        f"{row['short_signal']}"
-    )
+    return report
 
 
 # ============================================================
@@ -359,120 +1761,144 @@ def print_status(
 
 def main():
 
-    print("=" * 60)
-    print("X Trading Indicator")
-    print("기준: 일봉")
-    print("전략 계산 데이터: 최근 180일")
-    print("Telegram: 매일 장 마감 후 리포트 전송")
-    print("=" * 60)
+    # ========================================================
+    # 미국장 상태
+    # ========================================================
 
-    # --------------------------------------------------------
-    # Telegram 설정 확인
-    # --------------------------------------------------------
+    (
+        should_run,
+        market_close,
+        now_ny,
+    ) = check_market_status()
 
-    if not BOT_TOKEN or not CHAT_ID:
+    if not should_run:
 
-        print(
-            "ERROR: GitHub Secrets에 "
-            "BOT_TOKEN / CHAT_ID를 설정하세요."
-        )
+        return
 
-        sys.exit(1)
+    today_ny = now_ny.date()
 
-    # --------------------------------------------------------
-    # 종목별 검사
-    # --------------------------------------------------------
+    print(
+        "\n분석 날짜:",
+        today_ny
+    )
+
+    # ========================================================
+    # 종목 분석
+    # ========================================================
+
+    results = []
 
     for ticker in TICKERS:
 
         try:
 
-            # =================================================
-            # 데이터 다운로드
-            # =================================================
-
-            df = get_data(ticker)
-
-            # =================================================
-            # 전략 계산
-            # =================================================
-
-            result = run_strategy(df)
-
-            result_df = result["df"]
-
-            # 마지막 일봉
-            row = result_df.iloc[-1]
-
-            # =================================================
-            # 상태 출력
-            # =================================================
-
-            print_status(
+            result = analyze_ticker(
                 ticker,
-                row
+                today_ny
             )
 
-            # =================================================
-            # 일일 리포트 생성
-            # =================================================
+            if result is None:
 
-            message = make_daily_report(
-                ticker,
-                row,
-                result
-            )
+                continue
 
-            print()
-            print(
-                "📨 오늘의 Telegram 리포트 전송"
-            )
-
-            # =================================================
-            # Telegram 전송
+            # ------------------------------------------------
+            # QQQ / SPY
             #
-            # 신호가 없어도 무조건 전송
-            # =================================================
+            # 항상 표시
+            # ------------------------------------------------
 
-            send_telegram(
-                message
-            )
+            if ticker in ALWAYS_SHOW:
 
-            # =================================================
-            # 콘솔 표시
-            # =================================================
-
-            if result["long_signal"]:
-
-                print(
-                    "🟢 LONG 신호 발생!"
+                results.append(
+                    result
                 )
 
-            elif result["short_signal"]:
-
                 print(
-                    "🔴 SHORT 신호 발생!"
+                    f"{ticker}: "
+                    "기본 종목 → 항상 표시"
                 )
 
-            else:
+                continue
 
-                print(
-                    "→ 현재 진입 신호 없음"
-                )
+            # ------------------------------------------------
+            # 빅테크
+            #
+            # 매수조건 있을 때만 표시
+            # ------------------------------------------------
+
+            if ticker in BIG_TECH:
+
+                if result[
+                    "buy_condition"
+                ]:
+
+                    results.append(
+                        result
+                    )
+
+                    print(
+                        f"{ticker}: "
+                        "매수조건 발생 → 표시"
+                    )
+
+                else:
+
+                    print(
+                        f"{ticker}: "
+                        "매수조건 없음 → 제외"
+                    )
 
         except Exception as e:
 
-            print()
             print(
-                f"❌ [{ticker}] 오류 발생:"
+                f"{ticker} 분석 실패:",
+                repr(e)
             )
 
-            print(e)
+    # ========================================================
+    # 전송할 종목이 없는 경우
+    # ========================================================
 
-    print()
-    print("=" * 60)
-    print("실행 완료")
-    print("=" * 60)
+    if not results:
+
+        print(
+            "전송할 결과가 없습니다."
+        )
+
+        return
+
+    # ========================================================
+    # 리포트
+    # ========================================================
+
+    report = make_report(
+        results,
+        market_close
+    )
+
+    print(
+        "\n========================================"
+    )
+
+    print(
+        report
+    )
+
+    print(
+        "========================================"
+    )
+
+    # ========================================================
+    # Telegram
+    # ========================================================
+
+    send_telegram(
+        report
+    )
+
+    print(
+        "Telegram 전송 완료"
+    )
 
 
 # ============================================================
@@ -480,4 +1906,6 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
+
     main()
+```
