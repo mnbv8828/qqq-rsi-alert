@@ -2,12 +2,20 @@ name: US Stock Daily Report
 
 on:
   schedule:
-    - cron: "10 18 * * 1-5"
-    - cron: "10 19 * * 1-5"
-    - cron: "10 20 * * 1-5"
-    - cron: "10 21 * * 1-5"
+    - cron: "10 16 * * 1-5"
+      timezone: "America/New_York"
 
   workflow_dispatch:
+    inputs:
+      test_mode:
+        description: "수동 테스트 모드"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: us-stock-daily-report
+  cancel-in-progress: false
 
 jobs:
   daily-report:
@@ -31,5 +39,7 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
         run: |
+          echo "TEST_MODE=$TEST_MODE"
           python main.py
