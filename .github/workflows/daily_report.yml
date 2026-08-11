@@ -1,130 +1,58 @@
 name: US Stock Daily Report
 
 on:
-  # ==========================================================
-  # 조기폐장 대응
-  #
-  # NYSE 조기폐장 보통 13:00 NY
-  # → 14:30 NY 실행
-  #
-  # 정상장 날에는 아직 장중이므로
-  # main.py가 자동으로 종료
-  # ==========================================================
-
   schedule:
-    - cron: "30 14 * * 1-5"
+    # 조기폐장 대응
+    # NYSE 13:00 마감 → 13:30 실행
+    - cron: "30 13 * * 1-5"
       timezone: "America/New_York"
 
-    # ========================================================
-    # 정상장 대응
-    #
-    # NYSE 정상 마감 16:00 NY
-    # → 16:30 NY 실행
-    #
-    # Yahoo 데이터 반영 지연을 고려
-    # main.py가 최대 30분 추가 재시도
-    # ========================================================
-
+    # 정상장 마감 대응
+    # NYSE 16:00 마감 → 16:30 실행
     - cron: "30 16 * * 1-5"
       timezone: "America/New_York"
-
-  # ==========================================================
-  # 수동 실행
-  # ==========================================================
 
   workflow_dispatch:
     inputs:
       test_mode:
         description: "수동 테스트 모드"
         required: true
-        default: true
+        default: false
         type: boolean
-
-
-# ============================================================
-# 동시 실행 방지
-# ============================================================
 
 concurrency:
   group: us-stock-daily-report
   cancel-in-progress: false
 
-
-# ============================================================
-# JOB
-# ============================================================
-
 jobs:
-
   daily-report:
-
     runs-on: ubuntu-latest
 
     steps:
-
-      # ------------------------------------------------------
-      # Repository
-      # ------------------------------------------------------
-
       - name: Checkout
         uses: actions/checkout@v4
-
-
-      # ------------------------------------------------------
-      # Python
-      # ------------------------------------------------------
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-
-      # ------------------------------------------------------
-      # Dependencies
-      # ------------------------------------------------------
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-
-      # ------------------------------------------------------
-      # 실행
-      # ------------------------------------------------------
-
       - name: Run US Stock Daily Report
         env:
-
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-
           CHAT_ID: ${{ secrets.CHAT_ID }}
-
-          # --------------------------------------------------
-          # 수동 실행
-          # → 선택한 test_mode 사용
-          #
-          # 자동 실행
-          # → false
-          # --------------------------------------------------
-
           TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
 
         run: |
-
           echo "========================================"
           echo "US Stock Daily Report"
           echo "========================================"
-
-          echo "GitHub Event : ${{ github.event_name }}"
-          echo "TEST_MODE    : $TEST_MODE"
-
+          echo "TEST_MODE=$TEST_MODE"
           echo "========================================"
 
           python main.py
-
-          echo "========================================"
-          echo "Workflow finished"
-          echo "========================================"
-```
