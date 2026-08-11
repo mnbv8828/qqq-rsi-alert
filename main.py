@@ -17,6 +17,15 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
 # ------------------------------------------------------------
+# 수동 테스트 모드
+# GitHub Actions에서 Run workflow로 실행할 때 사용
+# ------------------------------------------------------------
+TEST_MODE = (
+    os.environ.get("TEST_MODE", "false").lower()
+    == "true"
+)
+
+# ------------------------------------------------------------
 # 전체 분석 종목
 # ------------------------------------------------------------
 
@@ -157,12 +166,6 @@ def check_market_status():
         NY_TZ
     )
 
-    market_close = (
-        get_nyse_market_close(
-            now_ny
-        )
-    )
-
     print(
         "현재 뉴욕 시간:",
         now_ny.strftime(
@@ -171,9 +174,33 @@ def check_market_status():
     )
 
     # --------------------------------------------------------
+    # 수동 테스트 모드
+    #
+    # 미국장 마감 여부 / 휴장 여부를 검사하지 않고
+    # 가장 최근 거래 데이터를 사용해 분석합니다.
+    # --------------------------------------------------------
+    if TEST_MODE:
+
+        print(
+            "🧪 TEST MODE: "
+            "미국장 시간 검사를 건너뜁니다."
+        )
+
+        return (
+            True,
+            None,
+            now_ny,
+        )
+
+    market_close = (
+        get_nyse_market_close(
+            now_ny
+        )
+    )
+
+    # --------------------------------------------------------
     # 휴장
     # --------------------------------------------------------
-
     if market_close is None:
 
         print(
@@ -196,7 +223,6 @@ def check_market_status():
     # --------------------------------------------------------
     # 장 마감 전
     # --------------------------------------------------------
-
     if now_ny < market_close:
 
         print(
@@ -212,9 +238,9 @@ def check_market_status():
     # --------------------------------------------------------
     # 마감 후 경과시간
     #
-    # 60분 이내의 실행만 허용
+    # GitHub Actions가 예약시간보다 늦게 실행될 수 있으므로
+    # 마감 후 60분 이내의 실행만 허용합니다.
     # --------------------------------------------------------
-
     elapsed = (
         now_ny -
         market_close
@@ -229,7 +255,7 @@ def check_market_status():
         )
 
         print(
-            "중복 실행 방지를 위해 종료합니다."
+            "자동 실행 조건이 아니므로 종료합니다."
         )
 
         return (
@@ -1410,7 +1436,10 @@ def analyze_ticker(
     # 오늘 거래 데이터가 없으면 제외
     # --------------------------------------------------------
 
-    if last_date != today_ny:
+    if (
+        last_date != today_ny
+        and not TEST_MODE
+    ):
 
         print(
             f"{ticker}: "
@@ -1418,6 +1447,13 @@ def analyze_ticker(
         )
 
         return None
+
+    if TEST_MODE and last_date != today_ny:
+
+        print(
+            f"{ticker}: TEST MODE → "
+            f"최근 거래일 {last_date} 사용"
+        )
 
     # ========================================================
     # 가격
@@ -1559,34 +1595,49 @@ def make_report(
         results[0]["date"]
     )
 
-    close_text = (
-        market_close.strftime(
-            "%H:%M"
-        )
-    )
-
-    # 정상장
-    if (
-        market_close.hour == 16
-        and
-        market_close.minute == 0
-    ):
+    if market_close is None:
 
         close_label = (
-            f"{close_text} NY"
+            "수동 테스트 "
+            "(최근 거래일 기준)"
         )
 
-    # 조기폐장
     else:
 
-        close_label = (
-            f"{close_text} NY "
-            "(조기 폐장)"
+        close_text = (
+            market_close.strftime(
+                "%H:%M"
+            )
         )
+
+        # 정상장
+        if (
+            market_close.hour == 16
+            and
+            market_close.minute == 0
+        ):
+
+            close_label = (
+                f"{close_text} NY"
+            )
+
+        # 조기폐장
+        else:
+
+            close_label = (
+                f"{close_text} NY "
+                "(조기 폐장)"
+            )
+
+    test_banner = (
+        "\n🧪 수동 테스트 실행\n"
+        if TEST_MODE
+        else ""
+    )
 
     report = f"""📊 미국장 일일 리포트
 ━━━━━━━━━━━━━━━━━━
-
+{test_banner}
 📅 거래일
 {first_date}
 
@@ -1895,9 +1946,14 @@ def main():
         report
     )
 
-    print(
-        "Telegram 전송 완료"
-    )
+    if TEST_MODE:
+        print(
+            "🧪 TEST MODE Telegram 전송 완료"
+        )
+    else:
+        print(
+            "Telegram 전송 완료"
+        )
 
 
 # ============================================================
@@ -1905,4 +1961,5 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
+
     main()
