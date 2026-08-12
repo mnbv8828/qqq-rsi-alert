@@ -218,6 +218,46 @@ def format_rsi(rsi):
 
 
 # ============================================================
+# RSI 방향 표시
+# ============================================================
+
+def get_rsi_direction(
+    current_rsi,
+    previous_rsi,
+):
+
+    if current_rsi > previous_rsi:
+        return "(+)"
+
+    elif current_rsi < previous_rsi:
+        return "(-)"
+
+    return "(0)"
+
+
+def format_rsi_with_direction(
+    current_rsi,
+    previous_rsi,
+):
+
+    direction = get_rsi_direction(
+        current_rsi,
+        previous_rsi,
+    )
+
+    if current_rsi <= 35:
+        return (
+            f"🟢 {current_rsi:.2f} "
+            f"{direction}"
+        )
+
+    return (
+        f"{current_rsi:.2f} "
+        f"{direction}"
+    )
+
+
+# ============================================================
 # NYSE 거래일정
 # ============================================================
 
@@ -1362,16 +1402,22 @@ def get_weekly_rsi(ticker):
         df["close"]
     ).astype(float)
 
-    weekly_rsi = (
-        calculate_rsi(
-            close,
-            RSI_LENGTH,
-        )
-        .iloc[-1]
+    rsi_series = calculate_rsi(
+        close,
+        RSI_LENGTH,
     )
 
-    return float(
-        weekly_rsi
+    weekly_rsi = float(
+        rsi_series.iloc[-1]
+    )
+
+    previous_weekly_rsi = float(
+        rsi_series.iloc[-2]
+    )
+
+    return (
+        weekly_rsi,
+        previous_weekly_rsi,
     )
 
 
@@ -1488,14 +1534,20 @@ def analyze_ticker(
     # RSI
     # --------------------------------------------------------
 
-    daily_rsi = float(
-        calculate_rsi(
-            df["close"],
-            RSI_LENGTH,
-        ).iloc[-1]
+    daily_rsi_series = calculate_rsi(
+        df["close"],
+        RSI_LENGTH,
     )
 
-    weekly_rsi = (
+    daily_rsi = float(
+        daily_rsi_series.iloc[-1]
+    )
+
+    previous_daily_rsi = float(
+        daily_rsi_series.iloc[-2]
+    )
+
+    weekly_rsi, previous_weekly_rsi = (
         get_weekly_rsi(
             ticker
         )
@@ -1579,7 +1631,10 @@ def analyze_ticker(
         "change": change,
 
         "daily_rsi": daily_rsi,
+        "previous_daily_rsi": previous_daily_rsi,
+
         "weekly_rsi": weekly_rsi,
+        "previous_weekly_rsi": previous_weekly_rsi,
 
         "long_signal": long_signal,
         "long_reason": long_reason,
@@ -1613,8 +1668,16 @@ def format_basic_result(
         "daily_rsi"
     ]
 
+    previous_daily_rsi = result[
+        "previous_daily_rsi"
+    ]
+
     weekly_rsi = result[
         "weekly_rsi"
+    ]
+
+    previous_weekly_rsi = result[
+        "previous_weekly_rsi"
     ]
 
     return f"""
@@ -1628,10 +1691,16 @@ ${price:.2f}
 {change:+.2f}%
 
 📊 일봉 RSI(14)
-{format_rsi(daily_rsi)}
+{format_rsi_with_direction(
+    daily_rsi,
+    previous_daily_rsi
+)}
 
 📊 주봉 RSI(14)
-{format_rsi(weekly_rsi)}
+{format_rsi_with_direction(
+    weekly_rsi,
+    previous_weekly_rsi
+)}
 
 """
 
@@ -1660,8 +1729,16 @@ def format_tech_result(
         "daily_rsi"
     ]
 
+    previous_daily_rsi = result[
+        "previous_daily_rsi"
+    ]
+
     weekly_rsi = result[
         "weekly_rsi"
+    ]
+
+    previous_weekly_rsi = result[
+        "previous_weekly_rsi"
     ]
 
     buy_conditions = result[
@@ -1685,10 +1762,16 @@ ${price:.2f}
 {change:+.2f}%
 
 📊 일봉 RSI(14)
-{format_rsi(daily_rsi)}
+{format_rsi_with_direction(
+    daily_rsi,
+    previous_daily_rsi
+)}
 
 📊 주봉 RSI(14)
-{format_rsi(weekly_rsi)}
+{format_rsi_with_direction(
+    weekly_rsi,
+    previous_weekly_rsi
+)}
 
 🔔 매수조건
 {condition_text}
