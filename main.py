@@ -257,6 +257,35 @@ def format_rsi_with_direction(
     )
 
 
+
+# ============================================================
+# 주봉 RSI 표시
+#
+# RSI <= 35
+# → 숫자 앞에 초록색 원 2개
+# ============================================================
+
+def format_weekly_rsi_with_direction(
+    current_rsi,
+    previous_rsi,
+):
+
+    direction = get_rsi_direction(
+        current_rsi,
+        previous_rsi,
+    )
+
+    if current_rsi <= 35:
+        return (
+            f"🟢🟢 {current_rsi:.2f} "
+            f"{direction}"
+        )
+
+    return (
+        f"{current_rsi:.2f} "
+        f"{direction}"
+    )
+
 # ============================================================
 # NYSE 거래일정
 # ============================================================
@@ -1697,7 +1726,7 @@ ${price:.2f}
 )}
 
 📊 주봉 RSI(14)
-{format_rsi_with_direction(
+{format_weekly_rsi_with_direction(
     weekly_rsi,
     previous_weekly_rsi
 )}
@@ -1768,7 +1797,7 @@ ${price:.2f}
 )}
 
 📊 주봉 RSI(14)
-{format_rsi_with_direction(
+{format_weekly_rsi_with_direction(
     weekly_rsi,
     previous_weekly_rsi
 )}
