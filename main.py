@@ -356,43 +356,58 @@ def analyze_ticker(ticker, today_ny):
     }
 
 def make_rsi_table(result):
-    # 일봉: 2일전 → 1일전 → 당일
+    # ========================================================
+    # 일봉 RSI
+    # 2일전 → 1일전 → 당일
+    # ========================================================
+
     d0 = result["two_days_ago_daily_rsi"]
     d1 = result["previous_daily_rsi"]
     d2 = result["daily_rsi"]
 
-    # 주봉: 2주전 → 1주전 → 금주
+    d_change_1 = rsi_change_text(d1, d0)
+    d_change_2 = rsi_change_text(d2, d1)
+
+    # 각 기간별 RSI 기준으로 초록불 표시
+    d_note_0 = "🟢" if d0 <= 35 else "-"
+    d_note_1 = "🟢" if d1 <= 35 else "-"
+    d_note_2 = "🟢" if d2 <= 35 else "-"
+
+
+    # ========================================================
+    # 주봉 RSI
+    # 2주전 → 1주전 → 금주
+    # ========================================================
+
     w0 = result["two_weeks_ago_weekly_rsi"]
     w1 = result["previous_weekly_rsi"]
     w2 = result["weekly_rsi"]
 
-    # 변화량은 바로 전 기간 대비.
-    d_change_1 = rsi_change_text(d1, d0)
-    d_change_2 = rsi_change_text(d2, d1)
     w_change_1 = rsi_change_text(w1, w0)
     w_change_2 = rsi_change_text(w2, w1)
 
-    # 초록불은 비고 라인으로 분리.
-    d_note = "🟢" if d2 <= 35 else "-"
-    w_note = "🟢🟢" if w2 <= 35 else "-"
+    # 각 기간별 RSI 기준으로 초록불 표시
+    w_note_0 = "🟢🟢" if w0 <= 35 else "-"
+    w_note_1 = "🟢🟢" if w1 <= 35 else "-"
+    w_note_2 = "🟢🟢" if w2 <= 35 else "-"
+
+
+    # ========================================================
+    # 텔레그램 표시용
+    # ========================================================
 
     return (
-        "📊 일봉 RSI(14)\n"
-        "┌────────┬────────┬────────┬────────┐\n"
-        "│ 구분   │ 2일전  │ 1일전  │ 당일   │\n"
-        "├────────┼────────┼────────┼────────┤\n"
-        f"│ RSI    │ {d0:>6.2f} │ {d1:>6.2f} │ {d2:>6.2f} │\n"
-        f"│ 증감   │ -      │ {d_change_1:>6} │ {d_change_2:>6} │\n"
-        f"│ 비고   │ -      │ -      │ {d_note:^6} │\n"
-        "└────────┴────────┴────────┴────────┘\n\n"
-        "📊 주봉 RSI(14)\n"
-        "┌────────┬────────┬────────┬────────┐\n"
-        "│ 구분   │ 2주전  │ 1주전  │ 금주   │\n"
-        "├────────┼────────┼────────┼────────┤\n"
-        f"│ RSI    │ {w0:>6.2f} │ {w1:>6.2f} │ {w2:>6.2f} │\n"
-        f"│ 증감   │ -      │ {w_change_1:>6} │ {w_change_2:>6} │\n"
-        f"│ 비고   │ -      │ -      │ {w_note:^6} │\n"
-        "└────────┴────────┴────────┴────────┘"
+        "📊 일봉 RSI(14)\n\n"
+        "기간     RSI      증감     비고\n"
+        f"2일전   {d0:5.2f}      -       {d_note_0}\n"
+        f"1일전   {d1:5.2f}    {d_change_1:>6}     {d_note_1}\n"
+        f"당일     {d2:5.2f}    {d_change_2:>6}     {d_note_2}\n"
+        "\n\n"
+        "📊 주봉 RSI(14)\n\n"
+        "기간     RSI      증감     비고\n"
+        f"2주전   {w0:5.2f}      -       {w_note_0}\n"
+        f"1주전   {w1:5.2f}    {w_change_1:>6}     {w_note_1}\n"
+        f"금주     {w2:5.2f}    {w_change_2:>6}     {w_note_2}"
     )
 
 def format_basic_result(result):
