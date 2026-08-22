@@ -399,14 +399,14 @@ def make_rsi_table(result):
     return (
         "📊 일봉 RSI(14)\n\n"
         "기간       RSI        증감       비고\n"
-        f"2일전   {d0:5.2f}      -       {d_note_0}\n"
-        f"1일전   {d1:5.2f}    {d_change_1:>6}     {d_note_1}\n"
+        f"2일전   {d0:5.2f}      -                  {d_note_0}\n"
+        f"1일전   {d1:5.2f}    {d_change_1:>6}      {d_note_1}\n"
         f"당일     {d2:5.2f}    {d_change_2:>6}     {d_note_2}\n"
         "\n\n"
         "📊 주봉 RSI(14)\n\n"
         "기간       RSI        증감       비고\n"
-        f"2주전   {w0:5.2f}      -       {w_note_0}\n"
-        f"1주전   {w1:5.2f}    {w_change_1:>6}     {w_note_1}\n"
+        f"2주전   {w0:5.2f}      -                  {w_note_0}\n"
+        f"1주전   {w1:5.2f}    {w_change_1:>6}      {w_note_1}\n"
         f"금주     {w2:5.2f}    {w_change_2:>6}     {w_note_2}"
     )
 
