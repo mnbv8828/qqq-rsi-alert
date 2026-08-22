@@ -401,7 +401,7 @@ def make_rsi_table(result):
         "기간       RSI        증감       비고\n"
         f"2일전   {d0:5.2f}        -             {d_note_0}\n"
         f"1일전   {d1:5.2f}    {d_change_1:>6}         {d_note_1}\n"
-        f"당  일   {d2:5.2f}    {d_change_2:>6}        {d_note_2}\n"
+        f"금  일   {d2:5.2f}    {d_change_2:>6}        {d_note_2}\n"
         "\n\n"
         "📊 주봉 RSI(14)\n\n"
         "기간       RSI        증감       비고\n"
