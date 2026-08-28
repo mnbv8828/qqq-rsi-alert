@@ -2,7 +2,7 @@ name: US Stock Daily Report
 
 on:
   schedule:
-    - cron: "37 5 * * *"
+    - cron: "45 5 * * *"
       timezone: "America/New_York"
 
   workflow_dispatch:
