@@ -1,0 +1,55 @@
+name: GS Quant Stock Analyzer
+
+on:
+  schedule:
+    - cron: "30 13 * * 1-5"
+      timezone: "America/New_York"
+
+    - cron: "30 16 * * 1-5"
+      timezone: "America/New_York"
+
+  workflow_dispatch:
+    inputs:
+      TEST_MODE:
+        description: "수동 테스트 모드"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: gs-quant-stock-analyzer
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r gs_quant_requirements.txt
+
+      - name: Run GS Quant Stock Analyzer
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+
+          TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.TEST_MODE || false }}
+
+        run: |
+          echo "========================================"
+          echo "GS Quant Stock Analyzer"
+          echo "========================================"
+          echo "TEST_MODE=$TEST_MODE"
+          echo "========================================"
+
+          python gs_quant_main.py
