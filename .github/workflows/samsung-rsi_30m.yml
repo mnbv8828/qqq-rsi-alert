@@ -1,0 +1,80 @@
+name: Samsung 30M RSI Alert
+
+on:
+
+  schedule:
+
+    # ========================================================
+    # 한국시간 기준
+    #
+    # GitHub Actions는 UTC
+    #
+    # 한국시간 09:00~15:30
+    # 30분 간격
+    #
+    # ========================================================
+
+    - cron: "0,30 0-6 * * 1-5"
+
+  workflow_dispatch:
+
+    inputs:
+
+      test_mode:
+        description: "테스트 모드"
+        required: true
+        default: false
+        type: boolean
+
+
+jobs:
+
+  samsung-rsi:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+
+        uses: actions/checkout@v4
+
+
+      - name: Setup Python
+
+        uses: actions/setup-python@v5
+
+        with:
+
+          python-version: "3.12"
+
+
+      - name: Install packages
+
+        run: |
+
+          pip install \
+            pandas \
+            requests
+
+
+      - name: Run Samsung RSI
+
+        env:
+
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+
+          TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || 'false' }}
+
+        run: |
+
+          echo "================================"
+          echo "Samsung 30M RSI"
+          echo "TEST_MODE=$TEST_MODE"
+          echo "================================"
+
+          python samsung_rsi_30m.py
