@@ -2,7 +2,7 @@ name: US Stock Daily Report
 
 on:
   schedule:
-    - cron: "00 20 * * 1-5"
+    - cron: "13 1 * * *"
       timezone: "America/New_York"
 
   workflow_dispatch:
@@ -39,7 +39,7 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
+          TEST_MODE: "true"
 
         run: |
           echo "========================================"
