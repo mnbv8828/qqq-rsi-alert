@@ -422,25 +422,26 @@ def get_minute_bars_for_date(
             # 09:00:00 이상
             # 15:30:00 미만
             #
-            # 15:30 데이터는 30분봉 생성에서 제외
             # ====================================================
 
-            if not (
-                dt.hour > 9
-                or (
-                    dt.hour == 9
-                    and dt.minute >= 0
-                )
-            ):
+            market_open = dt.replace(
+                hour=9,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+
+            market_close = dt.replace(
+                hour=15,
+                minute=30,
+                second=0,
+                microsecond=0,
+            )
+
+            if dt < market_open:
                 continue
 
-            if (
-                dt.hour > 15
-                or (
-                    dt.hour == 15
-                    and dt.minute >= 30
-                )
-            ):
+            if dt >= market_close:
                 continue
 
             records.append(
@@ -587,6 +588,7 @@ def get_historical_minute_bars(
     )
 
     print("================================")
+
     print(
         f"전체 1분봉 : "
         f"{len(result)}개"
@@ -609,11 +611,17 @@ def get_historical_minute_bars(
 
 # ============================================================
 # 1분봉 → 정확한 30분봉
+#
+# 중요:
+# 완성되지 않은 30분봉은 절대 사용하지 않는다.
 # ============================================================
 
 def make_30m_bars(
     df
 ):
+
+    if df.empty:
+        return pd.DataFrame()
 
     data = df.copy()
 
@@ -627,42 +635,29 @@ def make_30m_bars(
 
     # ========================================================
     # 반드시 09:00 이상 15:30 미만만 사용
-    #
-    # 따라서 15:30~16:00 봉은 생성 불가능
     # ========================================================
 
+    market_open = datetime.strptime(
+        "09:00",
+        "%H:%M"
+    ).time()
+
+    market_close = datetime.strptime(
+        "15:30",
+        "%H:%M"
+    ).time()
+
     data = data[
-        (
-            data.index.time
-            >= datetime.strptime(
-                "09:00",
-                "%H:%M"
-            ).time()
-        )
+        (data.index.time >= market_open)
         &
-        (
-            data.index.time
-            < datetime.strptime(
-                "15:30",
-                "%H:%M"
-            ).time()
-        )
+        (data.index.time < market_close)
     ]
 
     if data.empty:
-
-        return pd.DataFrame(
-            columns=[
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-            ]
-        )
+        return pd.DataFrame()
 
     # ========================================================
-    # 30분 단위로 생성
+    # 먼저 30분봉 생성
     # ========================================================
 
     bars = (
@@ -694,10 +689,106 @@ def make_30m_bars(
         ]
     )
 
+    if bars.empty:
+        return pd.DataFrame()
+
     # ========================================================
-    # 안전장치
+    # 핵심 수정
     #
-    # 15:30 이상 시작하는 봉은 무조건 제거
+    # 각 30분봉이 실제로 완성되었는지 확인
+    #
+    # 예:
+    #
+    # 15:00~15:30 봉
+    # 실제 마지막 데이터가 15:19
+    #
+    # → 미완성 봉이므로 제거
+    #
+    # 정상:
+    #
+    # 15:00~15:30
+    # 마지막 데이터 >= 15:29
+    #
+    # → 완성봉으로 인정
+    # ========================================================
+
+    completed_bars = []
+
+    for timestamp in bars.index:
+
+        end_time = (
+            timestamp
+            + timedelta(minutes=30)
+        )
+
+        # 15:30 이후 시작 봉 제거
+        if end_time > timestamp.replace(
+            hour=15,
+            minute=30,
+            second=0,
+            microsecond=0,
+        ):
+            continue
+
+        # 해당 30분 구간의 원본 1분봉
+        segment = data[
+            (data.index >= timestamp)
+            &
+            (data.index < end_time)
+        ]
+
+        if segment.empty:
+            continue
+
+        first_time = segment.index.min()
+        last_time = segment.index.max()
+
+        # ====================================================
+        # 완성 여부 판단
+        #
+        # 시작 직후 데이터가 존재하고
+        # 마지막 1분이 29분 지점까지 존재해야 함
+        # ====================================================
+
+        expected_first = timestamp
+
+        expected_last = (
+            end_time
+            - timedelta(minutes=1)
+        )
+
+        if first_time > (
+            expected_first
+            + timedelta(minutes=1)
+        ):
+            print(
+                f"미완성 30분봉 제외 "
+                f": {timestamp.strftime('%H:%M')}~"
+                f"{end_time.strftime('%H:%M')} "
+                f"(첫 데이터 {first_time.strftime('%H:%M')})"
+            )
+            continue
+
+        if last_time < expected_last:
+            print(
+                f"미완성 30분봉 제외 "
+                f": {timestamp.strftime('%H:%M')}~"
+                f"{end_time.strftime('%H:%M')} "
+                f"(마지막 데이터 "
+                f"{last_time.strftime('%H:%M')})"
+            )
+            continue
+
+        completed_bars.append(
+            timestamp
+        )
+
+    bars = bars.loc[
+        completed_bars
+    ]
+
+    # ========================================================
+    # 최종 안전장치
     # ========================================================
 
     bars = bars[
@@ -708,6 +799,11 @@ def make_30m_bars(
             "%H:%M"
         ).time()
     ]
+
+    print(
+        f"완성된 30분봉 : "
+        f"{len(bars)}개"
+    )
 
     return bars
 
@@ -849,28 +945,42 @@ def get_last_completed_bar(
 
     for timestamp in bars.index:
 
+        timestamp = timestamp.to_pydatetime()
+
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(
+                tzinfo=KST
+            )
+
         end_time = (
             timestamp
-            +
-            timedelta(minutes=30)
+            + timedelta(minutes=30)
         )
 
         # ====================================================
-        # 15:30 이후 봉은 사용하지 않음
+        # 현재 시각 기준 실제 완성 여부
         # ====================================================
 
-        if end_time <= now:
+        if end_time > now:
+            continue
 
-            if end_time <= timestamp.replace(
-                hour=15,
-                minute=30,
-                second=0,
-                microsecond=0,
-            ):
+        # ====================================================
+        # 정규장 마지막 종료 시각 15:30
+        # ====================================================
 
-                completed.append(
-                    timestamp
-                )
+        market_close = timestamp.replace(
+            hour=15,
+            minute=30,
+            second=0,
+            microsecond=0,
+        )
+
+        if end_time > market_close:
+            continue
+
+        completed.append(
+            timestamp
+        )
 
     if not completed:
 
@@ -894,14 +1004,14 @@ def format_30m_period(
     timestamp
 ):
 
+    if hasattr(timestamp, "to_pydatetime"):
+        timestamp = timestamp.to_pydatetime()
+
     end_time = (
         timestamp
-        +
-        timedelta(minutes=30)
+        + timedelta(minutes=30)
     )
 
-    # 안전장치:
-    # 종료시간은 최대 15:30
     market_close = timestamp.replace(
         hour=15,
         minute=30,
@@ -910,7 +1020,6 @@ def format_30m_period(
     )
 
     if end_time > market_close:
-
         end_time = market_close
 
     return (
@@ -1028,6 +1137,7 @@ def check_rsi(
             f"RSI(14) : {current_rsi:.2f}\n"
             f"이전 RSI : {previous_rsi:.2f}\n\n"
             f"{status}\n\n"
+            "※ 완성된 30분봉만 사용"
         )
 
         send_telegram(
@@ -1038,6 +1148,9 @@ def check_rsi(
 
     # ========================================================
     # RSI 35 이하 진입
+    #
+    # 이전 RSI > 35
+    # 현재 RSI <= 35
     # ========================================================
 
     if (
@@ -1056,7 +1169,8 @@ def check_rsi(
             f"RSI(14) : {current_rsi:.2f}\n"
             f"이전 RSI : {previous_rsi:.2f}\n\n"
             "📉 RSI가 35 이하로 "
-            "진입했습니다."
+            "진입했습니다.\n\n"
+            "※ 완성된 30분봉 기준"
         )
 
         send_telegram(
@@ -1067,6 +1181,9 @@ def check_rsi(
 
     # ========================================================
     # RSI 70 이상 진입
+    #
+    # 이전 RSI < 70
+    # 현재 RSI >= 70
     # ========================================================
 
     if (
@@ -1085,7 +1202,8 @@ def check_rsi(
             f"RSI(14) : {current_rsi:.2f}\n"
             f"이전 RSI : {previous_rsi:.2f}\n\n"
             "📈 RSI가 70 이상으로 "
-            "진입했습니다."
+            "진입했습니다.\n\n"
+            "※ 완성된 30분봉 기준"
         )
 
         send_telegram(
@@ -1131,22 +1249,33 @@ def is_market_hours():
         + now.minute
     )
 
-    market_open = 9 * 60
+    # ========================================================
+    # GitHub Actions 실제 실행 허용 시간
+    #
+    # 09:35 ~ 15:35
+    #
+    # YAML에서도 동일하게 설정하지만
+    # Python에서도 이중으로 보호
+    # ========================================================
 
-    market_close = (
-        15 * 60 + 30
+    start_minutes = (
+        9 * 60 + 35
+    )
+
+    end_minutes = (
+        15 * 60 + 35
     )
 
     if (
-        market_open
+        start_minutes
         <= current_minutes
-        <= market_close
+        <= end_minutes
     ):
 
         return True
 
     print(
-        f"장외 시간 → "
+        f"실행 가능 시간 외 → "
         f"{now.strftime('%H:%M:%S')}"
     )
 
@@ -1188,6 +1317,10 @@ def main():
     )
 
     print(
+        "실행 범위 : 09:35~15:35"
+    )
+
+    print(
         "========================================"
     )
 
@@ -1221,14 +1354,14 @@ def main():
     )
 
     print(
-        f"생성된 30분봉 : "
+        f"생성된 완성 30분봉 : "
         f"{len(bars)}개"
     )
 
     if not bars.empty:
 
         print(
-            "마지막 30분봉 : "
+            "마지막 완성 30분봉 : "
             f"{format_30m_period(bars.index[-1])}"
         )
 
@@ -1238,7 +1371,7 @@ def main():
 
         raise RuntimeError(
             "RSI 계산에 필요한 "
-            "30분봉 데이터가 부족합니다."
+            "완성 30분봉 데이터가 부족합니다."
         )
 
     check_rsi(
