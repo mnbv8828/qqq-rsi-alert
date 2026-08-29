@@ -11,8 +11,6 @@ on:
     # 30분 간격
     # 15:35 마지막 실행
     #
-    # 한국시간(KST) → UTC
-    #
     # 09:35 → 00:35 UTC
     # 10:05 → 01:05 UTC
     # 10:35 → 01:35 UTC
@@ -44,23 +42,18 @@ jobs:
     steps:
 
       - name: Checkout
-
         uses: actions/checkout@v4
 
 
       - name: Setup Python
-
         uses: actions/setup-python@v5
 
         with:
-
           python-version: "3.12"
 
 
       - name: Install packages
-
         run: |
-
           pip install \
             pandas \
             requests
