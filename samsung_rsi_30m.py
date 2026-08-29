@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -16,7 +16,7 @@ SYMBOL_NAME = "삼성전자"
 
 RSI_LENGTH = 14
 
-# RSI 알림 기준
+# 알람 기준
 OVERSOLD_LEVEL = 35.0
 OVERBOUGHT_LEVEL = 70.0
 
@@ -38,13 +38,15 @@ KST = ZoneInfo("Asia/Seoul")
 # KIS API
 # ============================================================
 
-BASE_URL = "https://openapi.koreainvestment.com:9443"
+BASE_URL = (
+    "https://openapi.koreainvestment.com:9443"
+)
 
 TOKEN_API = "/oauth2/tokenP"
 
 
 # ------------------------------------------------------------
-# ★ 오늘 분봉 조회
+# 당일분봉조회
 # FHKST03010200
 # ------------------------------------------------------------
 
@@ -57,7 +59,7 @@ TODAY_TR_ID = "FHKST03010200"
 
 
 # ------------------------------------------------------------
-# ★ 과거 거래일 분봉 조회
+# 일별분봉조회
 # FHKST03010230
 # ------------------------------------------------------------
 
@@ -69,8 +71,7 @@ HISTORY_MINUTE_API = (
 HISTORY_TR_ID = "FHKST03010230"
 
 
-# RSI 초기값 안정화를 위해
-# 이전 거래일 여러 개 사용
+# RSI 초기값 안정화를 위한 과거 거래일 수
 HISTORY_TRADING_DAYS = 10
 
 TOKEN_MAX_RETRIES = 5
@@ -78,6 +79,24 @@ DATA_MAX_RETRIES = 3
 
 CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 30
+
+
+# ============================================================
+# 공통 빈 DataFrame
+# ============================================================
+
+def empty_minute_df():
+
+    return pd.DataFrame(
+        columns=[
+            "datetime",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]
+    )
 
 
 # ============================================================
@@ -251,7 +270,9 @@ def get_access_token():
 
         if attempt < TOKEN_MAX_RETRIES:
 
-            wait_seconds = 5 * attempt
+            wait_seconds = (
+                5 * attempt
+            )
 
             print(
                 f"{wait_seconds}초 후 재시도..."
@@ -287,10 +308,9 @@ def get_kis_headers(
 
 
 # ============================================================
-# 오늘 분봉 1회 조회
+# 당일분봉조회 1회
 #
-# ★ FHKST03010200
-# ★ 주식당일분봉조회
+# FHKST03010200
 # ============================================================
 
 def get_today_minute_chunk(
@@ -321,7 +341,7 @@ def get_today_minute_chunk(
         try:
 
             print(
-                f"오늘 당일분봉 조회 "
+                f"당일분봉 조회 "
                 f"(기준 {input_time}) "
                 f"{attempt}/{DATA_MAX_RETRIES}"
             )
@@ -343,9 +363,7 @@ def get_today_minute_chunk(
                     f"{response.text}"
                 )
 
-                print(
-                    last_error
-                )
+                print(last_error)
 
             else:
 
@@ -361,9 +379,7 @@ def get_today_minute_chunk(
                         f"{data.get('msg1')}"
                     )
 
-                    print(
-                        last_error
-                    )
+                    print(last_error)
 
                 else:
 
@@ -373,8 +389,8 @@ def get_today_minute_chunk(
                     )
 
                     print(
-                        f"오늘 당일분봉 "
-                        f"{len(rows)}개 수신"
+                        f"당일분봉 수신: "
+                        f"{len(rows)}개"
                     )
 
                     return rows
@@ -394,25 +410,24 @@ def get_today_minute_chunk(
             )
 
     raise RuntimeError(
-        "오늘 당일분봉 조회 실패\n"
+        "당일분봉 조회 실패\n"
         f"{last_error}"
     )
 
 
 # ============================================================
-# 오늘 전체 1분봉 조회
+# 오늘 1분봉 조회
 #
-# 09:35 실행
-# → 09:30 기준 데이터 조회
-# → 09:00~09:29 확보
+# 평일에 사용
 #
-# 10:05 실행
-# → 10:00 기준
-# → 09:00~09:59 확보
+# 09:35
+# → 09:00~09:30 완성봉
 #
-# 15:35 실행
-# → 15:30 기준
-# → 09:00~15:29 확보
+# 10:05
+# → 09:30~10:00 완성봉
+#
+# 15:35
+# → 15:00~15:30 완성봉
 # ============================================================
 
 def get_today_minute_bars(
@@ -446,7 +461,7 @@ def get_today_minute_bars(
     )
 
     # --------------------------------------------------------
-    # 마지막으로 완성된 30분봉 종료시각
+    # 마지막 완성 30분봉 종료시각
     # --------------------------------------------------------
 
     if now.minute >= 30:
@@ -479,21 +494,12 @@ def get_today_minute_bars(
 
     if latest_end <= market_open:
 
-        return pd.DataFrame(
-            columns=[
-                "datetime",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-            ]
-        )
+        return empty_minute_df()
 
     all_rows = []
 
     # --------------------------------------------------------
-    # 30분마다 API 호출
+    # 당일분봉 API 호출
     # --------------------------------------------------------
 
     anchor = (
@@ -520,10 +526,10 @@ def get_today_minute_bars(
             minutes=30
         )
 
-        time.sleep(0.5)
+        time.sleep(0.3)
 
     # --------------------------------------------------------
-    # DataFrame 변환
+    # DataFrame
     # --------------------------------------------------------
 
     records = []
@@ -553,14 +559,12 @@ def get_today_minute_bars(
                 tzinfo=KST
             )
 
-            # 정규장
             if dt < market_open:
                 continue
 
             if dt >= market_close:
                 continue
 
-            # 현재 시각 이후 데이터 방지
             if dt >= now:
                 continue
 
@@ -595,16 +599,7 @@ def get_today_minute_bars(
 
     if not records:
 
-        return pd.DataFrame(
-            columns=[
-                "datetime",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-            ]
-        )
+        return empty_minute_df()
 
     df = pd.DataFrame(
         records
@@ -628,11 +623,16 @@ def get_today_minute_bars(
     )
 
     print(
-        "★ 오늘 데이터 = 당일분봉조회"
+        "★ 오늘 데이터"
     )
 
     print(
-        f"오늘 1분봉 : {len(df)}개"
+        "★ KIS 당일분봉조회 "
+        "FHKST03010200"
+    )
+
+    print(
+        f"1분봉 : {len(df)}개"
     )
 
     print(
@@ -655,9 +655,7 @@ def get_today_minute_bars(
 # ============================================================
 # 과거 특정 거래일 1분봉
 #
-# ★ FHKST03010230
-#
-# RSI 초기 계산용
+# FHKST03010230
 # ============================================================
 
 def get_history_minute_bars_for_date(
@@ -822,18 +820,30 @@ def get_history_minute_bars_for_date(
                 tzinfo=KST
             )
 
-            if dt.hour < 9:
+            market_open = datetime(
+                target_date.year,
+                target_date.month,
+                target_date.day,
+                9,
+                0,
+                0,
+                tzinfo=KST,
+            )
 
+            market_close = datetime(
+                target_date.year,
+                target_date.month,
+                target_date.day,
+                15,
+                30,
+                0,
+                tzinfo=KST,
+            )
+
+            if dt < market_open:
                 continue
 
-            if (
-                dt.hour > 15
-                or (
-                    dt.hour == 15
-                    and dt.minute >= 30
-                )
-            ):
-
+            if dt >= market_close:
                 continue
 
             records.append(
@@ -867,16 +877,7 @@ def get_history_minute_bars_for_date(
 
     if not records:
 
-        return pd.DataFrame(
-            columns=[
-                "datetime",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-            ]
-        )
+        return empty_minute_df()
 
     df = pd.DataFrame(
         records
@@ -904,21 +905,92 @@ def get_history_minute_bars_for_date(
 
 
 # ============================================================
-# 이전 거래일 데이터 확보
+# 가장 최근 실제 거래일 찾기
+#
+# 주말 / 공휴일 TEST_MODE용
+#
+# 토요일 → 금요일
+# 일요일 → 금요일
+# 공휴일 → 직전 실제 거래일
+# ============================================================
+
+def get_latest_trading_day(
+    token,
+    start_date=None,
+):
+
+    if start_date is None:
+
+        start_date = (
+            datetime.now(
+                KST
+            ).date()
+        )
+
+    candidate = start_date
+
+    for _ in range(20):
+
+        # 오늘이 평일이면 그대로 먼저 검사
+        # 주말이면 자동으로 건너뜀
+        if candidate.weekday() < 5:
+
+            print(
+                "실제 거래일 확인: "
+                f"{candidate}"
+            )
+
+            try:
+
+                df = (
+                    get_history_minute_bars_for_date(
+                        token,
+                        candidate,
+                    )
+                )
+
+                if not df.empty:
+
+                    print(
+                        "★ 가장 최근 거래일:"
+                        f" {candidate}"
+                    )
+
+                    return (
+                        candidate,
+                        df,
+                    )
+
+            except Exception as e:
+
+                print(
+                    f"{candidate} "
+                    f"거래일 확인 실패: {e}"
+                )
+
+        candidate -= timedelta(
+            days=1
+        )
+
+    raise RuntimeError(
+        "최근 실제 거래일을 "
+        "찾지 못했습니다."
+    )
+
+
+# ============================================================
+# RSI 초기 계산용 과거 데이터
 # ============================================================
 
 def get_history_minute_bars(
-    token
+    token,
+    end_date,
 ):
-
-    today = datetime.now(
-        KST
-    ).date()
 
     frames = []
 
     current_date = (
-        today
+        end_date
         - timedelta(days=1)
     )
 
@@ -930,7 +1002,6 @@ def get_history_minute_bars(
         < HISTORY_TRADING_DAYS
     ):
 
-        # 주말 제외
         if current_date.weekday() < 5:
 
             try:
@@ -1018,12 +1089,6 @@ def get_history_minute_bars(
 
 # ============================================================
 # 1분봉 → 30분봉
-#
-# 09:00~09:30
-# 09:30~10:00
-# 10:00~10:30
-# ...
-# 15:00~15:30
 # ============================================================
 
 def make_30m_bars(
@@ -1045,33 +1110,27 @@ def make_30m_bars(
     )
 
     # --------------------------------------------------------
-    # 정규장만
+    # 정규장
     # --------------------------------------------------------
 
-    data = data[
-        (
-            data.index.time
-            >= datetime.strptime(
-                "09:00",
-                "%H:%M"
-            ).time()
-        )
-        &
-        (
-            data.index.time
-            < datetime.strptime(
-                "15:30",
-                "%H:%M"
-            ).time()
-        )
-    ]
+    data = data.between_time(
+        "09:00",
+        "15:29",
+        inclusive="both",
+    )
 
     if data.empty:
 
         return pd.DataFrame()
 
     # --------------------------------------------------------
-    # 30분봉 생성
+    # 30분봉
+    #
+    # 09:00
+    # 09:30
+    # 10:00
+    # ...
+    # 15:00
     # --------------------------------------------------------
 
     bars = (
@@ -1104,7 +1163,7 @@ def make_30m_bars(
     )
 
     # --------------------------------------------------------
-    # 15:30 이후 제거
+    # 15:00~15:30까지만
     # --------------------------------------------------------
 
     bars = bars[
@@ -1112,39 +1171,25 @@ def make_30m_bars(
         <
         datetime.strptime(
             "15:30",
-            "%H:%M"
+            "%H:%M",
         ).time()
     ]
 
     # --------------------------------------------------------
-    # ★ 미완성 30분봉 제거
+    # 완성된 30분봉만 사용
     #
-    # 09:35 → 09:00~09:30만 사용
-    # 10:05 → 09:30~10:00까지 사용
+    # 데이터 자체의 마지막 1분이
+    # 해당 구간의 마지막 1분까지 존재해야 함
     # --------------------------------------------------------
 
     completed = []
 
-    now = datetime.now(
-        KST
-    )
-
     for timestamp in bars.index:
-
-        if timestamp.tzinfo is None:
-
-            timestamp = timestamp.replace(
-                tzinfo=KST
-            )
 
         end_time = (
             timestamp
             + timedelta(minutes=30)
         )
-
-        if end_time > now:
-
-            continue
 
         market_close = timestamp.replace(
             hour=15,
@@ -1157,12 +1202,6 @@ def make_30m_bars(
 
             continue
 
-        # 해당 30분 구간의 마지막 1분
-        expected_last = (
-            end_time
-            - timedelta(minutes=1)
-        )
-
         segment = data[
             (data.index >= timestamp)
             &
@@ -1173,17 +1212,16 @@ def make_30m_bars(
 
             continue
 
-        actual_last = segment.index.max()
+        expected_last = (
+            end_time
+            - timedelta(minutes=1)
+        )
 
-        # 마지막 1분 데이터가 있어야 완성봉
+        actual_last = (
+            segment.index.max()
+        )
+
         if actual_last < expected_last:
-
-            print(
-                f"미완성 봉 제외: "
-                f"{timestamp.strftime('%H:%M')}"
-                f"~"
-                f"{end_time.strftime('%H:%M')}"
-            )
 
             continue
 
@@ -1191,11 +1229,13 @@ def make_30m_bars(
             timestamp
         )
 
-    bars = bars.loc[
+    if not completed:
+
+        return pd.DataFrame()
+
+    return bars.loc[
         completed
     ]
-
-    return bars
 
 
 # ============================================================
@@ -1232,10 +1272,6 @@ def calculate_rsi_wilder(
 
         return rsi
 
-    # --------------------------------------------------------
-    # 초기 평균
-    # --------------------------------------------------------
-
     avg_gain = gain.iloc[
         1:length + 1
     ].mean()
@@ -1243,10 +1279,6 @@ def calculate_rsi_wilder(
     avg_loss = loss.iloc[
         1:length + 1
     ].mean()
-
-    # --------------------------------------------------------
-    # 첫 RSI
-    # --------------------------------------------------------
 
     if avg_loss == 0:
 
@@ -1273,10 +1305,6 @@ def calculate_rsi_wilder(
                 / (1.0 + rs)
             )
         )
-
-    # --------------------------------------------------------
-    # Wilder smoothing
-    # --------------------------------------------------------
 
     for i in range(
         length + 1,
@@ -1343,7 +1371,8 @@ def calculate_rsi_wilder(
 # ============================================================
 
 def get_last_completed_bar(
-    bars
+    bars,
+    target_date=None,
 ):
 
     if bars.empty:
@@ -1352,58 +1381,32 @@ def get_last_completed_bar(
             "30분봉 데이터가 없습니다."
         )
 
-    now = datetime.now(
-        KST
-    )
+    data = bars.copy()
 
-    completed = []
+    if target_date is not None:
 
-    for timestamp in bars.index:
+        data = data[
+            data.index.date
+            == target_date
+        ]
 
-        if timestamp.tzinfo is None:
-
-            timestamp = timestamp.replace(
-                tzinfo=KST
-            )
-
-        end_time = (
-            timestamp
-            + timedelta(minutes=30)
-        )
-
-        market_close = timestamp.replace(
-            hour=15,
-            minute=30,
-            second=0,
-            microsecond=0,
-        )
-
-        if end_time > market_close:
-
-            continue
-
-        if end_time <= now:
-
-            completed.append(
-                timestamp
-            )
-
-    if not completed:
+    if data.empty:
 
         raise RuntimeError(
-            "완성된 30분봉이 없습니다."
+            "대상 거래일의 "
+            "30분봉이 없습니다."
         )
 
-    timestamp = completed[-1]
+    timestamp = data.index[-1]
 
     return (
         timestamp,
-        bars.loc[timestamp],
+        data.loc[timestamp],
     )
 
 
 # ============================================================
-# 30분봉 표시
+# 30분봉 시간 표시
 # ============================================================
 
 def format_30m_period(
@@ -1440,11 +1443,13 @@ def format_30m_period(
 
 
 # ============================================================
-# RSI 확인
+# RSI 확인 + 알람
 # ============================================================
 
 def check_rsi(
-    bars
+    bars,
+    target_date,
+    data_source,
 ):
 
     data = bars.copy()
@@ -1458,7 +1463,8 @@ def check_rsi(
 
     timestamp, current = (
         get_last_completed_bar(
-            data
+            data,
+            target_date,
         )
     )
 
@@ -1497,7 +1503,7 @@ def check_rsi(
     )
 
     print(
-        "최종 RSI"
+        "★ 최종 RSI"
     )
 
     print(
@@ -1505,11 +1511,23 @@ def check_rsi(
     )
 
     print(
-        f"30분봉 : {period_text}"
+        f"데이터 날짜 : "
+        f"{target_date}"
     )
 
     print(
-        f"종가 : {close:,.0f}원"
+        f"데이터 출처 : "
+        f"{data_source}"
+    )
+
+    print(
+        f"30분봉 : "
+        f"{period_text}"
+    )
+
+    print(
+        f"종가 : "
+        f"{close:,.0f}원"
     )
 
     print(
@@ -1535,31 +1553,39 @@ def check_rsi(
         if current_rsi <= OVERSOLD_LEVEL:
 
             status = (
-                "🟢 RSI 35 이하"
+                f"🟢 RSI "
+                f"{OVERSOLD_LEVEL:.0f} 이하"
             )
 
         elif current_rsi >= OVERBOUGHT_LEVEL:
 
             status = (
-                "🔴 RSI 70 이상"
+                f"🔴 RSI "
+                f"{OVERBOUGHT_LEVEL:.0f} 이상"
             )
 
         else:
 
-            status = (
-                "⚪ 정상 구간"
-            )
+            status = "⚪ 정상 구간"
 
         message = (
             "🧪 삼성전자 30분봉 RSI 테스트\n\n"
-            f"종목 : {SYMBOL_NAME} ({SYMBOL})\n"
+            f"종목 : "
+            f"{SYMBOL_NAME} ({SYMBOL})\n"
             "주기 : 30분봉\n"
-            "지표 : RSI(14)\n"
-            "오늘 데이터 : KIS 당일분봉조회\n\n"
-            f"30분봉 : {period_text}\n"
-            f"종가 : {close:,.0f}원\n\n"
-            f"RSI(14) : {current_rsi:.2f}\n"
-            f"이전 RSI : {previous_rsi:.2f}\n\n"
+            "지표 : RSI(14)\n\n"
+            f"데이터 날짜 : "
+            f"{target_date}\n"
+            f"데이터 출처 : "
+            f"{data_source}\n\n"
+            f"30분봉 : "
+            f"{period_text}\n"
+            f"종가 : "
+            f"{close:,.0f}원\n\n"
+            f"RSI(14) : "
+            f"{current_rsi:.2f}\n"
+            f"이전 RSI : "
+            f"{previous_rsi:.2f}\n\n"
             f"{status}\n\n"
             "※ 완성된 30분봉 기준"
         )
@@ -1581,14 +1607,22 @@ def check_rsi(
 
         message = (
             "🟢 삼성전자 RSI 35 이하 진입\n\n"
-            f"종목 : {SYMBOL_NAME} ({SYMBOL})\n"
+            f"종목 : "
+            f"{SYMBOL_NAME} ({SYMBOL})\n"
             "주기 : 30분봉\n"
-            "지표 : RSI(14)\n"
-            "오늘 데이터 : KIS 당일분봉조회\n\n"
-            f"30분봉 : {period_text}\n"
-            f"종가 : {close:,.0f}원\n"
-            f"RSI(14) : {current_rsi:.2f}\n"
-            f"이전 RSI : {previous_rsi:.2f}\n\n"
+            "지표 : RSI(14)\n\n"
+            f"데이터 날짜 : "
+            f"{target_date}\n"
+            f"데이터 출처 : "
+            f"{data_source}\n\n"
+            f"30분봉 : "
+            f"{period_text}\n"
+            f"종가 : "
+            f"{close:,.0f}원\n"
+            f"RSI(14) : "
+            f"{current_rsi:.2f}\n"
+            f"이전 RSI : "
+            f"{previous_rsi:.2f}\n\n"
             "📉 RSI가 35 이하로 "
             "진입했습니다.\n\n"
             "※ 완성된 30분봉 기준"
@@ -1611,14 +1645,22 @@ def check_rsi(
 
         message = (
             "🔴 삼성전자 RSI 70 이상 진입\n\n"
-            f"종목 : {SYMBOL_NAME} ({SYMBOL})\n"
+            f"종목 : "
+            f"{SYMBOL_NAME} ({SYMBOL})\n"
             "주기 : 30분봉\n"
-            "지표 : RSI(14)\n"
-            "오늘 데이터 : KIS 당일분봉조회\n\n"
-            f"30분봉 : {period_text}\n"
-            f"종가 : {close:,.0f}원\n"
-            f"RSI(14) : {current_rsi:.2f}\n"
-            f"이전 RSI : {previous_rsi:.2f}\n\n"
+            "지표 : RSI(14)\n\n"
+            f"데이터 날짜 : "
+            f"{target_date}\n"
+            f"데이터 출처 : "
+            f"{data_source}\n\n"
+            f"30분봉 : "
+            f"{period_text}\n"
+            f"종가 : "
+            f"{close:,.0f}원\n"
+            f"RSI(14) : "
+            f"{current_rsi:.2f}\n"
+            f"이전 RSI : "
+            f"{previous_rsi:.2f}\n\n"
             "📈 RSI가 70 이상으로 "
             "진입했습니다.\n\n"
             "※ 완성된 30분봉 기준"
@@ -1638,28 +1680,43 @@ def check_rsi(
 # ============================================================
 # 실행 시간
 #
+# 일반 모드:
 # 09:35 ~ 15:35
+#
+# TEST_MODE:
+# 시간 제한 없음
 # ============================================================
 
-def is_market_hours():
-
-    if TEST_MODE:
-
-        print(
-            "TEST_MODE=True "
-            "→ 시간 체크 생략"
-        )
-
-        return True
+def is_allowed_to_run():
 
     now = datetime.now(
         KST
     )
 
+    # --------------------------------------------------------
+    # 테스트 모드
+    # --------------------------------------------------------
+
+    if TEST_MODE:
+
+        print(
+            "TEST_MODE=True"
+        )
+
+        print(
+            "→ 실행 시간 제한 없음"
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # 일반 모드
+    # --------------------------------------------------------
+
     if now.weekday() >= 5:
 
         print(
-            "주말 → 종료"
+            "주말 → 일반 실행 안 함"
         )
 
         return False
@@ -1691,6 +1748,113 @@ def is_market_hours():
     )
 
     return False
+
+
+# ============================================================
+# 대상 데이터 결정
+#
+# ★ 핵심
+#
+# 평일 TEST_MODE
+# → 오늘 당일분봉
+#
+# 평일 일반
+# → 오늘 당일분봉
+#
+# 주말 TEST_MODE
+# → 가장 최근 실제 거래일
+#
+# 공휴일 TEST_MODE
+# → 가장 최근 실제 거래일
+# ============================================================
+
+def get_target_data(
+    token
+):
+
+    now = datetime.now(
+        KST
+    )
+
+    today = now.date()
+
+    # ========================================================
+    # 평일
+    # ========================================================
+
+    if today.weekday() < 5:
+
+        # ----------------------------------------------------
+        # 평일에는 TEST_MODE 여부와 관계없이
+        # 오늘 당일분봉조회 사용
+        # ----------------------------------------------------
+
+        print(
+            "★ 평일"
+        )
+
+        print(
+            f"★ 대상 날짜 : {today}"
+        )
+
+        print(
+            "★ 오늘 당일분봉조회 사용"
+        )
+
+        today_df = (
+            get_today_minute_bars(
+                token
+            )
+        )
+
+        if today_df.empty:
+
+            raise RuntimeError(
+                "오늘 당일분봉 데이터가 없습니다."
+            )
+
+        return (
+            today,
+            today_df,
+            "KIS 당일분봉조회 "
+            "FHKST03010200",
+        )
+
+    # ========================================================
+    # 주말
+    # ========================================================
+
+    if TEST_MODE:
+
+        print(
+            "★ 주말 TEST_MODE"
+        )
+
+        print(
+            "→ 가장 최근 실제 거래일 탐색"
+        )
+
+        latest_date, latest_df = (
+            get_latest_trading_day(
+                token,
+                today - timedelta(days=1),
+            )
+        )
+
+        return (
+            latest_date,
+            latest_df,
+            "KIS 일별분봉조회 "
+            "FHKST03010230 "
+            "(최근 거래일)",
+        )
+
+    # 일반 모드 주말
+    return (
+        None,
+        empty_minute_df(),
+        "주말 일반 실행 안 함",
+    )
 
 
 # ============================================================
@@ -1728,17 +1892,19 @@ def main():
     )
 
     print(
-        "실행 : 09:35 ~ 15:35"
+        "30분봉 : 09:00~15:30"
     )
 
     print(
-        "오늘 데이터 : "
-        "KIS 당일분봉조회"
+        "실행 : 09:35~15:35"
     )
 
     print(
-        "과거 데이터 : "
-        "KIS 일별분봉조회"
+        "평일 TEST → 당일 데이터"
+    )
+
+    print(
+        "주말 TEST → 최근 거래일"
     )
 
     print(
@@ -1759,10 +1925,10 @@ def main():
     )
 
     # --------------------------------------------------------
-    # 실행 시간 체크
+    # 실행 가능 여부
     # --------------------------------------------------------
 
-    if not is_market_hours():
+    if not is_allowed_to_run():
 
         return
 
@@ -1773,43 +1939,40 @@ def main():
     token = get_access_token()
 
     # --------------------------------------------------------
-    # 1. 과거 데이터
+    # 대상 날짜 + 데이터
+    # --------------------------------------------------------
+
+    target_date, target_df, data_source = (
+        get_target_data(
+            token
+        )
+    )
+
+    if target_date is None:
+
+        return
+
+    # --------------------------------------------------------
+    # RSI 초기값용 과거 데이터
     #
-    # RSI 초기값 안정화
+    # 대상 날짜 이전의 거래일
     # --------------------------------------------------------
 
     history_df = (
         get_history_minute_bars(
-            token
+            token,
+            target_date,
         )
     )
 
     # --------------------------------------------------------
-    # 2. 오늘 데이터
-    #
-    # ★ 당일분봉조회 사용
+    # 과거 + 대상일
     # --------------------------------------------------------
-
-    today_df = (
-        get_today_minute_bars(
-            token
-        )
-    )
-
-    # --------------------------------------------------------
-    # 3. 합치기
-    # --------------------------------------------------------
-
-    if today_df.empty:
-
-        raise RuntimeError(
-            "오늘 당일분봉 데이터가 없습니다."
-        )
 
     all_df = pd.concat(
         [
             history_df,
-            today_df,
+            target_df,
         ],
         ignore_index=True,
     )
@@ -1832,7 +1995,8 @@ def main():
     )
 
     print(
-        f"전체 1분봉 : {len(all_df)}개"
+        f"전체 1분봉 : "
+        f"{len(all_df)}개"
     )
 
     print(
@@ -1850,7 +2014,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # 4. 30분봉 생성
+    # 30분봉 생성
     # --------------------------------------------------------
 
     bars = make_30m_bars(
@@ -1858,7 +2022,7 @@ def main():
     )
 
     print(
-        f"완성 30분봉 : "
+        f"생성된 완성 30분봉 : "
         f"{len(bars)}개"
     )
 
@@ -1868,30 +2032,40 @@ def main():
             "30분봉 생성 실패"
         )
 
+    # --------------------------------------------------------
+    # 대상일 30분봉 확인
+    # --------------------------------------------------------
+
+    target_bars = bars[
+        bars.index.date
+        == target_date
+    ]
+
+    if target_bars.empty:
+
+        raise RuntimeError(
+            f"{target_date} "
+            "30분봉이 없습니다."
+        )
+
     print(
-        f"마지막 30분봉 : "
-        f"{format_30m_period(bars.index[-1])}"
+        f"대상일 30분봉 : "
+        f"{len(target_bars)}개"
+    )
+
+    print(
+        "마지막 대상 봉 : "
+        f"{format_30m_period(target_bars.index[-1])}"
     )
 
     # --------------------------------------------------------
-    # RSI 계산에 필요한 최소 데이터
-    # --------------------------------------------------------
-
-    if len(bars) < (
-        RSI_LENGTH + 2
-    ):
-
-        raise RuntimeError(
-            "RSI 계산에 필요한 "
-            "30분봉 데이터가 부족합니다."
-        )
-
-    # --------------------------------------------------------
-    # 5. RSI
+    # RSI 계산
     # --------------------------------------------------------
 
     check_rsi(
-        bars
+        bars,
+        target_date,
+        data_source,
     )
 
     elapsed = (
