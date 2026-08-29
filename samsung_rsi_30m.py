@@ -59,7 +59,7 @@ TODAY_TR_ID = "FHKST03010200"
 
 
 # ------------------------------------------------------------
-# 일별분봉조회
+# 과거 거래일 분봉조회
 # FHKST03010230
 # ------------------------------------------------------------
 
@@ -675,7 +675,7 @@ def get_history_minute_bars_for_date(
 
         print(
             f"{date_str} "
-            f"과거분봉 "
+            f"과거 거래일 분봉 "
             f"{page + 1}/10 "
             f"(기준 {current_time})"
         )
@@ -908,6 +908,8 @@ def get_history_minute_bars_for_date(
 # 가장 최근 실제 거래일 찾기
 #
 # 주말 / 공휴일 TEST_MODE용
+#
+# 찾은 날짜의 1분봉을 사용
 #
 # 토요일 → 금요일
 # 일요일 → 금요일
@@ -1831,7 +1833,7 @@ def get_target_data(
         )
 
         print(
-            "→ 가장 최근 실제 거래일 탐색"
+            "→ 가장 최근 실제 거래일의 1분봉 사용"
         )
 
         latest_date, latest_df = (
@@ -1844,7 +1846,7 @@ def get_target_data(
         return (
             latest_date,
             latest_df,
-            "KIS 일별분봉조회 "
+            "KIS 과거 거래일 1분봉조회 "
             "FHKST03010230 "
             "(최근 거래일)",
         )
@@ -1904,7 +1906,7 @@ def main():
     )
 
     print(
-        "주말 TEST → 최근 거래일"
+        "주말 TEST → 최근 거래일 1분봉"
     )
 
     print(
