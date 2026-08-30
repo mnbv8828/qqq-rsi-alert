@@ -1584,11 +1584,11 @@ def make_rsi_table(
     return (
         "📊 일봉 RSI(14)\n\n"
         f"1일전   {d1:5.2f}          {d_note_1}\n"
-        f"[금일]   {d2:5.2f} ({d_change})   {d_note_2}\n"
+        f"금일   {d2:5.2f} ({d_change})   {d_note_2}\n"
         "\n\n"
         "📊 주봉 RSI(14)\n\n"
         f"1주전   {w1:5.2f}          {w_note_1}\n"
-        f"[금주]   {w2:5.2f} ({w_change})   {w_note_2}"
+        f"금주   {w2:5.2f} ({w_change})   {w_note_2}"
     )
 
 
