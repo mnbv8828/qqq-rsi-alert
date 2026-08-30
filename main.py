@@ -1509,86 +1509,30 @@ def analyze_ticker(
 # RSI 바로 뒤에 (+2.35) 형식으로 표시
 # ============================================================
 
-def make_rsi_table(
-    result,
-):
+def make_rsi_table(result):
 
-    # ========================================================
     # 일봉 RSI
-    # 1일전 → 금일
-    # ========================================================
+    daily_rsi = result["daily_rsi"]
+    previous_daily_rsi = result["previous_daily_rsi"]
 
-    d1 = result[
-        "previous_daily_rsi"
-    ]
-
-    d2 = result[
-        "daily_rsi"
-    ]
-
-    d_change = rsi_change_text(
-        d2,
-        d1,
+    daily_change = rsi_change_text(
+        daily_rsi,
+        previous_daily_rsi,
     )
 
-    d_note_1 = (
-        "🟢"
-        if d1 <= 35
-        else
-        "-"
-    )
-
-    d_note_2 = (
-        "🟢"
-        if d2 <= 35
-        else
-        "-"
-    )
-
-    # ========================================================
     # 주봉 RSI
-    # 1주전 → 금주
-    # ========================================================
+    weekly_rsi = result["weekly_rsi"]
+    previous_weekly_rsi = result["previous_weekly_rsi"]
 
-    w1 = result[
-        "previous_weekly_rsi"
-    ]
-
-    w2 = result[
-        "weekly_rsi"
-    ]
-
-    w_change = rsi_change_text(
-        w2,
-        w1,
+    weekly_change = rsi_change_text(
+        weekly_rsi,
+        previous_weekly_rsi,
     )
-
-    w_note_1 = (
-        "🟢🟢"
-        if w1 <= 35
-        else
-        "-"
-    )
-
-    w_note_2 = (
-        "🟢🟢"
-        if w2 <= 35
-        else
-        "-"
-    )
-
-    # ========================================================
-    # 텔레그램 표시용
-    # ========================================================
 
     return (
-        "📊 일봉 RSI(14)\n\n"
-        f"1일전   {d1:5.2f}          {d_note_1}\n"
-        f"금일   {d2:5.2f} ({d_change})   {d_note_2}\n"
-        "\n\n"
-        "📊 주봉 RSI(14)\n\n"
-        f"1주전   {w1:5.2f}          {w_note_1}\n"
-        f"금주   {w2:5.2f} ({w_change})   {w_note_2}"
+        "📊 RSI(14)\n"
+        f"일봉: {daily_rsi:.2f} ({daily_change}) / "
+        f"주봉: {weekly_rsi:.2f} ({weekly_change})"
     )
 
 
