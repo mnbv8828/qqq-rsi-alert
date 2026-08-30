@@ -1648,18 +1648,19 @@ def make_report(
     # QQQ / SPY
     # ========================================================
 
-    for result in results:
+for result in results:
 
-        if result[
-            "ticker"
-        ] in ALWAYS_SHOW:
+    if result[
+        "ticker"
+    ] in ALWAYS_SHOW:
 
-            report += (
-                format_basic_result(
-                    result
-                      + "\n"
-                )
+        report += (
+            format_basic_result(
+                result
             )
+        )
+
+        report += "\n"
 
     # ========================================================
     # 매수조건 발생 기술주
