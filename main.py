@@ -1657,6 +1657,7 @@ def make_report(
             report += (
                 format_basic_result(
                     result
+                      + "\n"
                 )
             )
 
