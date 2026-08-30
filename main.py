@@ -1697,11 +1697,7 @@ def make_report(
         f"{first_date}\n\n"
         f"🕐 NYSE 마감\n"
         f"{close_label}\n\n"
-        "📌 기본 분석\n"
-        "QQQ / SPY\n\n"
-        "📌 기술주\n"
-        "MSFT / AMZN / GOOG / AAPL\n"
-        "META / NVDA / TSLA / PLTR\n"
+      
     )
 
     # ========================================================
