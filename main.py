@@ -421,10 +421,7 @@ def make_report(results, market_close):
         f"{test_banner}"
         f"📅 거래일\n{first_date}\n\n"
         f"🕐 NYSE 마감\n{close_label}\n\n"
-        "📌 기본 분석\nQQQ / SPY\n\n"
-        "📌 기술주\n"
-        "MSFT / AMZN / GOOG / AAPL\n"
-        "META / NVDA / TSLA / PLTR\n"
+      
     )
 
     for result in results:
