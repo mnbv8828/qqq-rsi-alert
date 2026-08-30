@@ -410,22 +410,25 @@ def make_rsi_table(result):
         f"[금주]   {w2:5.2f}    {w_change_2:>6}        {w_note_2}"
     )
 
+```python
 def format_basic_result(result):
     return (
         f"\n⚪ {result['ticker']}\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
-        f"💰 종가\n${result['price']:.2f}\n\n"
-        f"📈 등락률\n{result['change']:+.2f}%\n\n"
+        f"💰 종가\n${result['price']:.2f} ({result['change']:+.2f}%)\n\n"
         f"{make_rsi_table(result)}\n"
     )
 
+
 def format_tech_result(result):
-    condition_text = "\n".join(f"• {c}" for c in result["buy_conditions"])
+    condition_text = "\n".join(
+        f"• {c}" for c in result["buy_conditions"]
+    )
+
     return (
         f"\n🟢 {result['ticker']}\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
-        f"💰 종가\n${result['price']:.2f}\n\n"
-        f"📈 등락률\n{result['change']:+.2f}%\n\n"
+        f"💰 종가\n${result['price']:.2f} ({result['change']:+.2f}%)\n\n"
         f"{make_rsi_table(result)}\n\n"
         f"🔔 매수조건\n{condition_text}\n"
     )
