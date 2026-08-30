@@ -410,7 +410,6 @@ def make_rsi_table(result):
         f"[금주]   {w2:5.2f}    {w_change_2:>6}        {w_note_2}"
     )
 
-```python
 def format_basic_result(result):
     return (
         f"\n⚪ {result['ticker']}\n"
