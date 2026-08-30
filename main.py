@@ -370,9 +370,22 @@ def make_rsi_table(result):
         f"주봉: {weekly_rsi:.2f} ({weekly_change})"
     )
 
+def get_rsi_circle(result):
+    daily_rsi = result["daily_rsi"]
+    weekly_rsi = result["weekly_rsi"]
+
+    if daily_rsi <= 35 or weekly_rsi <= 35:
+        return "🟢"
+
+    if daily_rsi >= 70 or weekly_rsi >= 70:
+        return "🟠"
+
+    return "⚪"
+
+
 def format_basic_result(result):
     return (
-        f"\n⚪ {result['ticker']}\n"
+        f"\n{get_rsi_circle(result)} {result['ticker']}\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         f"💰 종가\n${result['price']:.2f} ({result['change']:+.2f}%)\n\n"
         f"{make_rsi_table(result)}\n"
