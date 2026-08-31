@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -108,7 +108,15 @@ def send_telegram(message):
     if not BOT_TOKEN or not CHAT_ID:
 
         print(
-            "BOT_TOKEN 또는 CHAT_ID가 없습니다."
+            "❌ BOT_TOKEN 또는 CHAT_ID가 없습니다."
+        )
+
+        print(
+            f"BOT_TOKEN 존재 : {bool(BOT_TOKEN)}"
+        )
+
+        print(
+            f"CHAT_ID 존재 : {bool(CHAT_ID)}"
         )
 
         return False
@@ -120,6 +128,10 @@ def send_telegram(message):
 
     try:
 
+        print(
+            "📨 Telegram 전송 시도"
+        )
+
         response = requests.post(
             url,
             data={
@@ -129,18 +141,38 @@ def send_telegram(message):
             timeout=15,
         )
 
-        response.raise_for_status()
-
         print(
-            "Telegram 전송 성공"
+            f"Telegram HTTP 상태코드 : "
+            f"{response.status_code}"
         )
 
-        return True
+        print(
+            f"Telegram 응답 : "
+            f"{response.text}"
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        if data.get("ok") is True:
+
+            print(
+                "✅ Telegram 전송 성공"
+            )
+
+            return True
+
+        print(
+            "❌ Telegram API 응답 실패"
+        )
+
+        return False
 
     except Exception as e:
 
         print(
-            f"Telegram 전송 실패: {e}"
+            f"❌ Telegram 전송 실패 : {e}"
         )
 
         return False
@@ -416,17 +448,6 @@ def get_today_minute_chunk(
 
 # ============================================================
 # 오늘 1분봉 조회
-#
-# 평일에 사용
-#
-# 09:31
-# → 09:00~09:30 완성봉
-#
-# 10:01
-# → 09:30~10:00 완성봉
-#
-# 15:31
-# → 15:00~15:30 완성봉
 # ============================================================
 
 def get_today_minute_bars(
@@ -904,8 +925,6 @@ def get_history_minute_bars_for_date(
 
 # ============================================================
 # 가장 최근 실제 거래일 찾기
-#
-# 주말 / 공휴일 TEST_MODE용
 # ============================================================
 
 def get_latest_trading_day(
@@ -1117,12 +1136,6 @@ def make_30m_bars(
 
     # --------------------------------------------------------
     # 30분봉
-    #
-    # 09:00
-    # 09:30
-    # 10:00
-    # ...
-    # 15:00
     # --------------------------------------------------------
 
     bars = (
@@ -1433,6 +1446,17 @@ def format_30m_period(
 
 # ============================================================
 # RSI 확인 + 알람
+#
+# ★ 변경사항
+#
+# RSI 35 이하:
+# → 현재 RSI <= 35 이면 알림
+#
+# RSI 70 이상:
+# → 현재 RSI >= 70 이면 알림
+#
+# 이전 RSI 값은 표시만 하고
+# 진입 여부 판단에는 사용하지 않음
 # ============================================================
 
 def check_rsi(
@@ -1534,28 +1558,40 @@ def check_rsi(
     )
 
     # ========================================================
+    # 현재 RSI 상태
+    # ========================================================
+
+    if current_rsi <= OVERSOLD_LEVEL:
+
+        status = (
+            f"🟢 RSI "
+            f"{OVERSOLD_LEVEL:.0f} 이하"
+        )
+
+    elif current_rsi >= OVERBOUGHT_LEVEL:
+
+        status = (
+            f"🔴 RSI "
+            f"{OVERBOUGHT_LEVEL:.0f} 이상"
+        )
+
+    else:
+
+        status = "⚪ 정상 구간"
+
+    print(
+        f"현재 상태 : {status}"
+    )
+
+    print(
+        "========================================"
+    )
+
+    # ========================================================
     # TEST MODE
     # ========================================================
 
     if TEST_MODE:
-
-        if current_rsi <= OVERSOLD_LEVEL:
-
-            status = (
-                f"🟢 RSI "
-                f"{OVERSOLD_LEVEL:.0f} 이하"
-            )
-
-        elif current_rsi >= OVERBOUGHT_LEVEL:
-
-            status = (
-                f"🔴 RSI "
-                f"{OVERBOUGHT_LEVEL:.0f} 이상"
-            )
-
-        else:
-
-            status = "⚪ 정상 구간"
 
         message = (
             "🧪 삼성전자 30분봉 RSI 테스트\n\n"
@@ -1579,23 +1615,28 @@ def check_rsi(
             "※ 완성된 30분봉 기준"
         )
 
-        send_telegram(
+        result = send_telegram(
             message
+        )
+
+        print(
+            f"TEST Telegram 결과 : "
+            f"{result}"
         )
 
         return
 
     # ========================================================
-    # RSI 35 이하 진입
+    # RSI 35 이하
+    #
+    # ★ 이전 RSI와 관계없이
+    # ★ 현재 RSI가 35 이하이면 알림
     # ========================================================
 
-    if (
-        previous_rsi > OVERSOLD_LEVEL
-        and current_rsi <= OVERSOLD_LEVEL
-    ):
+    if current_rsi <= OVERSOLD_LEVEL:
 
         message = (
-            "🟢 삼성전자 RSI 35 이하 진입\n\n"
+            "🟢 삼성전자 RSI 35 이하\n\n"
             f"종목 : "
             f"{SYMBOL_NAME} ({SYMBOL})\n"
             "주기 : 30분봉\n"
@@ -1612,28 +1653,32 @@ def check_rsi(
             f"{current_rsi:.2f}\n"
             f"이전 RSI : "
             f"{previous_rsi:.2f}\n\n"
-            "📉 RSI가 35 이하로 "
-            "진입했습니다.\n\n"
+            "📉 현재 RSI가 35 이하입니다.\n\n"
             "※ 완성된 30분봉 기준"
         )
 
-        send_telegram(
+        result = send_telegram(
             message
+        )
+
+        print(
+            f"🟢 RSI 35 이하 Telegram 결과 : "
+            f"{result}"
         )
 
         return
 
     # ========================================================
-    # RSI 70 이상 진입
+    # RSI 70 이상
+    #
+    # ★ 이전 RSI와 관계없이
+    # ★ 현재 RSI가 70 이상이면 알림
     # ========================================================
 
-    if (
-        previous_rsi < OVERBOUGHT_LEVEL
-        and current_rsi >= OVERBOUGHT_LEVEL
-    ):
+    elif current_rsi >= OVERBOUGHT_LEVEL:
 
         message = (
-            "🔴 삼성전자 RSI 70 이상 진입\n\n"
+            "🔴 삼성전자 RSI 70 이상\n\n"
             f"종목 : "
             f"{SYMBOL_NAME} ({SYMBOL})\n"
             "주기 : 30분봉\n"
@@ -1650,19 +1695,27 @@ def check_rsi(
             f"{current_rsi:.2f}\n"
             f"이전 RSI : "
             f"{previous_rsi:.2f}\n\n"
-            "📈 RSI가 70 이상으로 "
-            "진입했습니다.\n\n"
+            "📈 현재 RSI가 70 이상입니다.\n\n"
             "※ 완성된 30분봉 기준"
         )
 
-        send_telegram(
+        result = send_telegram(
             message
         )
 
+        print(
+            f"🔴 RSI 70 이상 Telegram 결과 : "
+            f"{result}"
+        )
+
         return
+
+    # ========================================================
+    # 정상 구간
+    # ========================================================
 
     print(
-        "RSI 35/70 신규 진입 없음"
+        "RSI 35 이하 / 70 이상 조건 없음"
     )
 
 
@@ -1876,7 +1929,6 @@ def main():
         "30분봉 : 09:00~15:30"
     )
 
-    # ★ 변경
     print(
         "실행 : 09:31~15:31"
     )
@@ -1936,8 +1988,6 @@ def main():
 
     # --------------------------------------------------------
     # RSI 초기값용 과거 데이터
-    #
-    # 대상 날짜 이전의 거래일
     # --------------------------------------------------------
 
     history_df = (
@@ -2041,7 +2091,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # RSI 계산
+    # RSI 계산 + Telegram
     # --------------------------------------------------------
 
     check_rsi(
