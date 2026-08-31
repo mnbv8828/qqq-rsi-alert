@@ -2,9 +2,9 @@ name: US Stock Daily Report
 
 on:
   schedule:
-    - cron: "5 19 * * 1-5"
-      timezone: "Asia/Seoul"
-
+    # 미국 정규장: 한국시간 22:30 ~ 05:00 (서머타임 기준)
+    # 15분마다 실행
+    - cron: "*/15 13-20 * * 1-5"
   workflow_dispatch:
     inputs:
       test_mode:
