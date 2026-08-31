@@ -2,9 +2,12 @@ name: US Stock Daily Report
 
 on:
   schedule:
-    # 미국 정규장: 한국시간 22:30 ~ 05:00 (서머타임 기준)
-    # 15분마다 실행
-    - cron: "*/15 13-20 * * 1-5"
+    # 한국시간 화~토요일 07:15 실행
+    # GitHub Actions cron은 UTC 기준
+    # KST 07:15 = UTC 전날 22:15
+    # 서머타임/겨울시간과 관계없이 한국시간 07:15 고정
+    - cron: "15 22 * * 1-5"
+
   workflow_dispatch:
     inputs:
       test_mode:
